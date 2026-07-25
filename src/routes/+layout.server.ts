@@ -2,7 +2,7 @@ import type { LayoutServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
 import { isAuthEnabled, validateSession } from '$lib/server/auth';
 import { hasAdminUser } from '$lib/server/db';
- import { BACKUPS_ENABLED } from '$lib/server/features';
+import { BACKUPS_ENABLED } from '$lib/server/features';
 
 // Routes that don't require authentication
 const PUBLIC_PATHS = ['/login'];
