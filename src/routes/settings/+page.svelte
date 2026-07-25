@@ -16,7 +16,8 @@
 		Users,
 		Info,
 		GitBranch,
-		Tags
+		Tags,
+		Archive
 	} from 'lucide-svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -28,6 +29,7 @@
 	import GitTab from './git/GitTab.svelte';
 	import ConfigSetsTab from './config-sets/ConfigSetsTab.svelte';
 	import NotificationsTab from './notifications/NotificationsTab.svelte';
+	import BackupsTab from './backups/BackupsTab.svelte';
 	import AuthTab from './auth/AuthTab.svelte';
 	import LicenseTab from './license/LicenseTab.svelte';
 	import AboutTab from './about/AboutTab.svelte';
@@ -77,6 +79,13 @@
 				<Bell class="w-4 h-4" />
 				Notifications
 			</Tabs.Trigger>
+			<!-- BETA GATE: Backups tab hidden unless FEAT_BACKUPS_ENABLED (see features.ts) -->
+			{#if $page.data.backupsEnabled}
+				<Tabs.Trigger value="backups" class="flex-1 flex items-center justify-center gap-1.5">
+					<Archive class="w-4 h-4" />
+					Backups
+				</Tabs.Trigger>
+			{/if}
 			<Tabs.Trigger value="auth" class="flex-1 flex items-center justify-center gap-1.5">
 				<Users class="w-4 h-4" />
 				Authentication
@@ -117,6 +126,10 @@
 
 		<Tabs.Content value="notifications" class="flex-1 min-h-0 overflow-y-auto pr-3">
 			{#if activeTab === 'notifications'}<NotificationsTab />{/if}
+		</Tabs.Content>
+
+		<Tabs.Content value="backups" class="flex-1 min-h-0 overflow-y-auto">
+			{#if activeTab === 'backups'}<BackupsTab />{/if}
 		</Tabs.Content>
 
 		<Tabs.Content value="auth" class="flex-1 min-h-0 flex flex-col">
