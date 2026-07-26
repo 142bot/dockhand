@@ -743,33 +743,55 @@ export async function runRepoTask(destinationId: number, task: RepoTask, opts?: 
 
 // --- cancellation + running check ---
 
-/** Kill every running helper container whose name starts with `prefix`, in the
- * given env. Returns whether anything was killed. */
-async function killHelpers(prefix: string, envId: number | null | undefined): Promise<boolean> {
+/** Signal every running helper container whose name starts with `prefix`, in the
+ * given env (default SIGKILL). Returns the ids signalled. */
+async function killHelpers(prefix: string, envId: number | null | undefined, signal?: string): Promise<string[]> {
 	const { listContainers, dockerFetch } = await import('../docker');
-	let killed = false;
+	const ids: string[] = [];
+	const q = signal ? `?signal=${encodeURIComponent(signal)}` : '';
 	try {
 		const containers = await listContainers(true, envId ?? undefined);
 		for (const c of containers) {
 			if (c.state === 'running' && c.name?.startsWith(prefix)) {
-				try { await dockerFetch(`/containers/${c.id}/kill`, { method: 'POST' }, envId ?? undefined); killed = true; } catch { /* best effort */ }
+				try { await dockerFetch(`/containers/${c.id}/kill${q}`, { method: 'POST' }, envId ?? undefined); ids.push(c.id); } catch { /* best effort */ }
 			}
 		}
 	} catch { /* daemon unreachable */ }
-	return killed;
+	return ids;
 }
 
-/** Cancel a running backup: kill its helper so restic exits non-zero and the
- * service's failure path runs. */
+/** Cancel a running backup GRACEFULLY: send SIGINT so restic releases its repo
+ * lock before exiting (a SIGKILL orphans the lock and the next backup hangs on
+ * --retry-lock). Safety net: if the helper is still alive ~15s later, SIGKILL it
+ * so a cancel never itself hangs. */
 export async function cancelBackup(configId: number): Promise<boolean> {
 	const config = await getBackupConfig(configId);
-	return killHelpers(`dockhand-backup-${configId}`, config?.environmentId ?? undefined);
+	const envId = config?.environmentId ?? undefined;
+	const prefix = `dockhand-backup-${configId}`;
+	const signalled = await killHelpers(prefix, envId, 'SIGINT');
+	if (signalled.length === 0) return false;
+	// Force-kill any helper that ignored SIGINT (pathological restic hang), so the
+	// user's cancel resolves regardless. Best-effort, out of band.
+	void (async () => {
+		const { listContainers, dockerFetch } = await import('../docker');
+		for (let i = 0; i < 15; i++) {
+			await new Promise((r) => setTimeout(r, 1000));
+			try {
+				const alive = (await listContainers(true, envId)).some((c) => c.state === 'running' && signalled.includes(c.id));
+				if (!alive) return;
+			} catch { return; }
+		}
+		for (const id of signalled) {
+			try { await dockerFetch(`/containers/${id}/kill`, { method: 'POST' }, envId); } catch { /* gone */ }
+		}
+	})();
+	return true;
 }
 
 /** Cancel a running restore. A blanket cancel (no snapshotId) never kills a
  * swap-recovery helper (that is a data-safety op, not a user restore). */
 export async function cancelRestore(snapshotId?: string, environmentId?: number): Promise<boolean> {
-	if (snapshotId) return killHelpers(`dockhand-restore-${snapshotId.slice(0, 12)}`, environmentId);
+	if (snapshotId) return (await killHelpers(`dockhand-restore-${snapshotId.slice(0, 12)}`, environmentId)).length > 0;
 	// Blanket: kill restore helpers but NOT recovery helpers.
 	const { listContainers, dockerFetch } = await import('../docker');
 	let killed = false;

@@ -19,7 +19,7 @@
 	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
 	import {
 		Archive, Box, Layers, ChevronDown, ChevronRight, RefreshCw, Search, Play, Pause, Trash2, FolderOpen, RotateCcw,
-		CheckCircle, XCircle, AlertCircle, Loader2, Clock, X, ArrowLeftRight, Package
+		CheckCircle, XCircle, AlertCircle, Loader2, Clock, X, ArrowLeftRight, Package, Pencil
 	} from 'lucide-svelte';
 	import RotateCwFadingClock from '$lib/components/icons/RotateCwFadingClock.svelte';
 	import { formatDateTime } from '$lib/stores/settings';
@@ -31,6 +31,7 @@
 	import BackupLogModal from './BackupLogModal.svelte';
 	import SnapshotDiffModal from './SnapshotDiffModal.svelte';
 	import CreateBackupModal from './CreateBackupModal.svelte';
+	import EditBackupConfigModal from './EditBackupConfigModal.svelte';
 
 	interface BackupConfig {
 		key: string;
@@ -137,6 +138,9 @@
 	let confirmDeleteConfig = $state<number | null>(null);
 	let deletingConfig = $state<number | null>(null);
 	let togglingConfig = $state<number | null>(null);
+	// Edit-config modal (reuses the container/stack Backups tab — BackupPanel).
+	let editModalOpen = $state(false);
+	let editConfig = $state<BackupConfig | null>(null);
 
 	// Snapshot browser / restore
 	let showBrowser = $state(false);
@@ -506,6 +510,14 @@
 		}
 	}
 
+	// The Create-backup wizard hands off a freshly-saved config here to run through the
+	// shared BackupLogModal (same as Run-now), instead of an embedded log.
+	async function runBackupNowById({ configId }: { configId: number; targetName: string }) {
+		await fetchData();
+		const config = configs.find((c) => c.id === configId);
+		if (config) runBackupNow(config);
+	}
+
 	// Delete a backup CONFIG (its schedule too — the server unregisters it). The
 	// snapshots already in the repo are NOT touched; the target then shows as an
 	// Pause/resume a scheduled backup. A minimal PUT with only `enabled` is a
@@ -843,6 +855,9 @@
 									{#if togglingConfig === config.id}<RefreshCw class="w-3 h-3 text-muted-foreground animate-spin" />{:else if config.enabled}<Pause class="w-3 h-3 text-muted-foreground" />{:else}<RotateCwFadingClock class="w-3 h-3 text-muted-foreground" />{/if}
 								</button>
 							{/if}
+							<button type="button" class="p-0.5 rounded hover:bg-muted transition-colors opacity-70 hover:opacity-100" onclick={() => { editConfig = config; editModalOpen = true; }} title="Edit backup">
+								<Pencil class="w-3 h-3 text-muted-foreground" />
+							</button>
 							<button type="button" class="p-0.5 rounded hover:bg-muted transition-colors opacity-70 hover:opacity-100" onclick={() => runBackupNow(config)} disabled={runningBackup === config.id} title="Run backup now">
 								{#if runningBackup === config.id}<RefreshCw class="w-3 h-3 text-muted-foreground animate-spin" />{:else}<Play class="w-3 h-3 text-muted-foreground" />{/if}
 							</button>
@@ -1035,4 +1050,11 @@
 <CreateBackupModal
 	bind:open={showCreateModal}
 	onCreated={fetchData}
+	onRun={runBackupNowById}
+/>
+
+<EditBackupConfigModal
+	bind:open={editModalOpen}
+	config={editConfig}
+	onSaved={() => { editModalOpen = false; fetchData(); }}
 />

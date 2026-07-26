@@ -204,7 +204,7 @@ export class Restic {
 		const metadataFiles = spec.metadataFiles ?? [];
 		const beforeStart = metadataFiles.length > 0
 			? async (containerId: string) => {
-				const tar = buildTar(metadataFiles.map((f) => ({
+				const tar = await buildTar(metadataFiles.map((f) => ({
 					path: `metadata/${f.path.replace(/^\/+/, '')}`,
 					content: Buffer.from(f.contentBase64, 'base64'),
 				})));

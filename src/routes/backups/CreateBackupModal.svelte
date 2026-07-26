@@ -8,28 +8,29 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { TogglePill } from '$lib/components/ui/toggle-pill';
 	import CronEditor from '$lib/components/cron-editor.svelte';
-	import { Package, Box, Layers, Search, Loader2, CheckCircle2, XCircle, ArrowBigRight, Settings, Clock, Play } from 'lucide-svelte';
+	import { Package, Box, Layers, Search, Loader2, CheckCircle2, ArrowBigRight, Settings, Clock, Play } from 'lucide-svelte';
 	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
-	import { getRepoTypeIcon, formatCron, runBackupAction, isRemoteEnvironment, tagLogLine, type BackupFormState } from '$lib/utils/backup';
+	import { getRepoTypeIcon, formatCron, runBackupAction, isRemoteEnvironment, type BackupFormState } from '$lib/utils/backup';
 	import { toast } from 'svelte-sonner';
 	import VolumePicker from '$lib/components/backup/VolumePicker.svelte';
 	import DestinationPicker from '$lib/components/backup/DestinationPicker.svelte';
-	import LogConsole from '$lib/components/LogConsole.svelte';
 	import { normalizeMounts, volumesForStack, type VolumeInfo } from '$lib/utils/mounts';
 
 	interface Props {
 		open: boolean;
 		onCreated?: () => void;
+		/** Called after the config is saved with intent to RUN — the parent opens the
+		 *  shared BackupLogModal for it (same log UI as Run-now). */
+		onRun?: (r: { configId: number; targetName: string }) => void;
 	}
 
-	let { open = $bindable(), onCreated }: Props = $props();
+	let { open = $bindable(), onCreated, onRun }: Props = $props();
 
 	interface Environment { id: number; name: string; icon?: string; connectionType?: string; host?: string | null; }
 	interface Destination { id: number; name: string; repository: string; }
 	interface ContainerItem { name: string; type: 'container' | 'stack'; envId: number; envName: string; envIcon?: string; volumes: VolumeInfo[]; }
 
-	// Step state (4 = running/complete)
-	let step = $state<1 | 2 | 3 | 4>(1);
+	let step = $state<1 | 2 | 3>(1);
 
 	// Step 1: Select source
 	let environments = $state<Environment[]>([]);
@@ -50,12 +51,7 @@
 	let saveSchedule = $state(false);
 	let schedule = $state('0 2 * * *');
 	let scheduleInvalid = $state(false);
-	let running = $state(false);
-
-	// Step 4: Running log
-	let logs = $state<string[]>([]);
-	let backupStatus = $state<'idle' | 'running' | 'success' | 'error'>('idle');
-	let backupError = $state('');
+	let saving = $state(false);
 
 	$effect(() => {
 		if (open) {
@@ -69,10 +65,7 @@
 			selectedVolumes = [];
 			saveSchedule = false;
 			schedule = '0 2 * * *';
-			running = false;
-			logs = [];
-			backupStatus = 'idle';
-			backupError = '';
+			saving = false;
 			fetchEnvironments();
 			fetchDestinations();
 		}
@@ -135,16 +128,12 @@
 		step = 2;
 	}
 
-	async function runBackup() {
+	// Save the config, then (when run=true) hand it off to the parent's shared
+	// BackupLogModal — same log UI as Run-now everywhere else. run=false saves the
+	// recurring schedule without running now (it fires on cron).
+	async function saveAndMaybeRun(run: boolean) {
 		if (!selectedItem || !selectedDestId) return;
-		running = true;
-		logs = [];
-		backupStatus = 'running';
-		backupError = '';
-
-		// Wizard exposes two intents: "run and save the schedule" or
-		// "run once and discard". Both map cleanly onto the shared action
-		// orchestrator — same code path as BackupPanel's Save & run / Run once.
+		saving = true;
 		const form: BackupFormState = {
 			targetName: selectedItem.name,
 			type: selectedItem.type,
@@ -154,34 +143,28 @@
 			allVolumes,
 			selectedVolumes
 		};
-
 		try {
 			const result = await runBackupAction({
 				form,
-				action: saveSchedule ? 'save-run' : 'run-once',
-				schedule,
-				enabled: true,
-				onProgress: (line) => {
-					if (line.event === 'progress') {
-						const msg = (line.data as { message?: string } | null)?.message;
-						if (msg) logs = [...logs, tagLogLine(msg)];
-					}
-				}
+				action: 'save', // persist only; the run is delegated to the parent modal
+				schedule: saveSchedule ? schedule : '',
+				enabled: saveSchedule
 			});
-
-			if (!result.ok) {
-				backupStatus = 'error';
-				backupError = result.error || 'Backup failed';
-			} else {
-				backupStatus = 'success';
-				toast.success(saveSchedule ? 'Backup completed and schedule saved' : 'Backup completed');
+			if (!result.ok || !result.configId) {
+				toast.error(result.error || 'Failed to save backup');
+				return;
 			}
 			onCreated?.();
+			if (run) {
+				onRun?.({ configId: result.configId, targetName: selectedItem.name });
+			} else {
+				toast.success('Schedule saved');
+			}
+			open = false;
 		} catch (err: any) {
-			backupStatus = 'error';
-			backupError = err?.message || 'Backup failed';
+			toast.error(err?.message || 'Failed to save backup');
 		} finally {
-			running = false;
+			saving = false;
 		}
 	}
 
@@ -200,7 +183,7 @@
 	const isSelectedEnvRemote = $derived(isRemoteEnvironment(selectedEnv));
 </script>
 
-<Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen && running) return; open = isOpen; }}>
+<Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen && saving) return; open = isOpen; }}>
 	<Dialog.Content class="max-w-3xl h-[70vh] flex flex-col">
 		<Dialog.Header class="pb-0">
 			<Dialog.Title class="flex items-center gap-2 text-base">
@@ -382,52 +365,20 @@
 						</p>
 					{/if}
 
-					{#if backupStatus === 'idle'}
-						<!-- Not started yet -->
-					{/if}
-
 					<div class="flex items-center gap-2 pt-2">
-						{#if backupStatus === 'idle' || (backupStatus !== 'running' && logs.length === 0)}
-							<Button variant="outline" size="sm" onclick={() => step = 2} disabled={running}>Back</Button>
-						{/if}
+						<Button variant="outline" size="sm" onclick={() => step = 2} disabled={saving}>Back</Button>
 						<div class="flex-1"></div>
-						{#if backupStatus === 'success'}
-							<Button size="sm" onclick={() => { open = false; }}>
-								<CheckCircle2 class="w-3.5 h-3.5 mr-1.5 text-green-500" />Done
-							</Button>
-						{:else if backupStatus === 'error' && !running}
-							<Button size="sm" variant="outline" onclick={() => { backupStatus = 'idle'; logs = []; }}>
-								Retry
-							</Button>
-							<Button size="sm" onclick={() => { open = false; }}>Close</Button>
-						{:else}
-							<Button size="sm" onclick={runBackup} disabled={running || (saveSchedule && scheduleInvalid)}>
-								{#if running}<Loader2 class="w-3.5 h-3.5 mr-1.5 animate-spin" />{:else}<Play class="w-3.5 h-3.5 mr-1.5" />{/if}
-								{saveSchedule ? 'Run & save schedule' : 'Run backup now'}
+						{#if saveSchedule}
+							<Button variant="outline" size="sm" onclick={() => saveAndMaybeRun(false)} disabled={saving || scheduleInvalid}>
+								{#if saving}<Loader2 class="w-3.5 h-3.5 mr-1.5 animate-spin" />{:else}<CheckCircle2 class="w-3.5 h-3.5 mr-1.5" />{/if}
+								Save schedule only
 							</Button>
 						{/if}
+						<Button size="sm" onclick={() => saveAndMaybeRun(true)} disabled={saving || (saveSchedule && scheduleInvalid)}>
+							{#if saving}<Loader2 class="w-3.5 h-3.5 mr-1.5 animate-spin" />{:else}<Play class="w-3.5 h-3.5 mr-1.5" />{/if}
+							{saveSchedule ? 'Run & save schedule' : 'Run backup now'}
+						</Button>
 					</div>
-
-				<!-- Backup log — same shared renderer (pills, auto-scroll) as the backup
-				     panel and restore modal, with the wizard's own status line below. -->
-				{#if logs.length > 0 || running}
-					<div class="mt-3 flex min-h-0 flex-1 flex-col">
-						<LogConsole lines={logs} class="flex-1 min-h-0" />
-						{#if backupStatus === 'running'}
-							<div class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-								<Loader2 class="h-3 w-3 animate-spin" />Backing up…
-							</div>
-						{:else if backupStatus === 'success'}
-							<div class="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-green-500">
-								<CheckCircle2 class="h-3.5 w-3.5" />Backup completed
-							</div>
-						{:else if backupStatus === 'error'}
-							<div class="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-red-400">
-								<XCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" /><span class="break-all">{backupError || 'Failed'}</span>
-							</div>
-						{/if}
-					</div>
-				{/if}
 				</div>
 			{/if}
 		</div>

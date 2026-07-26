@@ -7,7 +7,7 @@
 	import { focusFirstInput } from '$lib/utils';
 	import ContainerSettingsTab from './ContainerSettingsTab.svelte';
 	import BackupPanel from './BackupPanel.svelte';
-	import { mountTypeFromHostPath } from '$lib/utils/mounts';
+	import { volumeInfoFromBind } from '$lib/utils/mounts';
 	import { fetchBackupExecutions } from '$lib/utils/backup';
 	import type { VulnerabilityCriteria } from '$lib/components/VulnerabilityCriteriaSelector.svelte';
 	import { parseHostPort, expandPortBindings, formatHostPort } from '$lib/utils/port-parse';
@@ -1198,7 +1198,7 @@
 					<BackupPanel
 						bind:this={backupPanelRef}
 						containerName={name}
-						volumes={volumeMappings.filter(v => v.hostPath && v.containerPath).map(v => ({ name: v.containerPath, mountPoint: v.hostPath, mountType: mountTypeFromHostPath(v.hostPath) }))}
+						volumes={volumeMappings.filter(v => v.hostPath && v.containerPath).map(volumeInfoFromBind)}
 						type="container"
 						onTally={(t) => (backupTally = t)}
 					/>

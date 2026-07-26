@@ -1,20 +1,16 @@
 /**
- * Canonical volume/bind normalization for the backup UI.
- *
- * Three surfaces (CreateBackupModal, BackupPanel via EditContainerModal, and
- * EnvironmentBackupsTab) previously each open-coded "Docker mounts -> pickable
- * volume list" and drifted: one dropped bind mounts entirely, one never set a
- * mount type (so every row rendered as a named volume). Both symptoms trace to
- * duplicated logic. This module is the single source of truth.
- *
- * Kept dependency-free (no Svelte/lucide/db imports) so it is unit-testable
- * under `bun test`.
+ * Canonical "Docker mounts -> pickable volume list" for the backup UI — the single
+ * source of truth, so the surfaces that use it can't drift. Dependency-free so it's
+ * unit-testable under `bun test`.
  */
 
 export interface VolumeInfo {
 	name: string;
 	mountPoint: string;
 	mountType: 'volume' | 'bind';
+	/** Bind mounts only: the host source path, for display (name is the container
+	 *  destination so it matches the backup engine's filter). */
+	source?: string;
 }
 
 /** A raw Docker mount as returned by the containers API (list or inspect).
@@ -39,9 +35,25 @@ export function mountTypeFromHostPath(hostPath: string): 'volume' | 'bind' {
 }
 
 /**
+ * A parsed bind entry (`hostPath:containerPath`) -> pickable VolumeInfo. `name` MUST
+ * match what the backup engine discovers (named volume -> its name/hostPath, bind ->
+ * its container destination), else the selectedVolumes filter drops it silently.
+ */
+export function volumeInfoFromBind(bind: { hostPath: string; containerPath: string }): VolumeInfo {
+	const mountType = mountTypeFromHostPath(bind.hostPath);
+	return {
+		name: mountType === 'bind' ? bind.containerPath : bind.hostPath,
+		mountPoint: bind.containerPath,
+		mountType
+	};
+}
+
+/**
  * Normalize a container's raw Docker mounts into the pickable volume list.
- * Keeps only `volume` and `bind` mounts (skips tmpfs/npipe/etc.), and derives
- * a stable display `name` (volume name, else source, else destination).
+ * Keeps only `volume` and `bind` mounts (skips tmpfs/npipe/etc.). `name` MUST
+ * equal what the backup engine discovers (named volume -> its name, bind -> its
+ * container destination), else the selectedVolumes filter drops it silently; the
+ * host source is kept separately in `source` for display only.
  */
 export function normalizeMounts(mounts: RawMount[] | null | undefined): VolumeInfo[] {
 	if (!Array.isArray(mounts)) return [];
@@ -49,12 +61,14 @@ export function normalizeMounts(mounts: RawMount[] | null | undefined): VolumeIn
 	for (const m of mounts) {
 		const type = m.type || m.Type;
 		if (type !== 'volume' && type !== 'bind') continue;
-		const name = m.name || m.Name || m.source || m.Source || m.destination || m.Destination || '';
-		out.push({
-			name,
-			mountPoint: m.destination || m.Destination || '',
-			mountType: type === 'bind' ? 'bind' : 'volume'
-		});
+		const destination = m.destination || m.Destination || '';
+		const source = m.source || m.Source || '';
+		if (type === 'bind') {
+			out.push({ name: destination || source, mountPoint: destination, mountType: 'bind', source: source || undefined });
+		} else {
+			const name = m.name || m.Name || source || destination || '';
+			out.push({ name, mountPoint: destination, mountType: 'volume' });
+		}
 	}
 	return out;
 }
@@ -112,15 +126,11 @@ function composeProject(c: RawContainer): string | undefined {
 }
 
 /**
- * Partition a raw /api/containers list into stack items (grouped by the compose
- * project label, mounts merged+deduped across the stack's containers) and
- * standalone container items. Sorted: stacks first, then containers, each
- * alphabetical.
- *
- * NOTE: deriving stacks from container labels can't see a stack's sourceType and
- * misses stopped stacks (no live containers). Backup-discovery surfaces now take
- * stacks from /api/stacks and standalone containers from {@link standaloneContainers}.
- * This whole-list grouping is kept for any caller that only has a container list.
+ * Partition a /api/containers list into stack items (grouped by compose-project label,
+ * mounts merged+deduped) and standalone containers; stacks first, then containers,
+ * each alphabetical. Deriving stacks from labels misses stopped stacks — most
+ * backup surfaces prefer /api/stacks + {@link standaloneContainers}; this is for
+ * callers that only have a container list.
  */
 export function groupContainersForBackup(containers: RawContainer[] | null | undefined): BackupItem[] {
 	if (!Array.isArray(containers)) return [];
@@ -164,15 +174,9 @@ export function volumesForStack(
 }
 
 /**
- * The STANDALONE-container slice of a /api/containers list: every container
- * WITHOUT a compose-project label, as a backup item with its mounts normalized.
- * Sorted alphabetically.
- *
- * This exists because the stack slice of a backup list must now come from
- * /api/stacks (the single source that knows a stack's sourceType and includes
- * stopped stacks) — reconstructing stacks from container labels missed both. So
- * the caller takes stacks from /api/stacks and standalone containers from here,
- * instead of {@link groupContainersForBackup} (which does both from labels).
+ * Standalone containers (no compose-project label) of a /api/containers list, as
+ * backup items, sorted alphabetically. Pairs with stacks from /api/stacks (which,
+ * unlike label-grouping, sees stopped stacks and their sourceType).
  */
 export function standaloneContainers(
 	containers: RawContainer[] | null | undefined

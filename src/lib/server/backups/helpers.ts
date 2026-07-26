@@ -251,6 +251,13 @@ export function cleanErrorMsg(msg: string): string {
 				const message = parsed.message.replace(/\\n/g, ' ').trim();
 				return prefix ? `${prefix} ${message}` : message;
 			}
+			if (parsed.message_type) {
+				// A killed helper appends restic's last --json PROGRESS line
+				// (message_type, no `message`) to the exit-code detail — no error
+				// text; drop it, keep just the readable prefix.
+				const p2 = clean.slice(0, jsonStart).trim().replace(/:\s*$/, '');
+				if (p2) return p2;
+			}
 		} catch { /* not embedded JSON */ }
 	}
 	return clean;

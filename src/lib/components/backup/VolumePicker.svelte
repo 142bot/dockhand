@@ -19,6 +19,7 @@
 		name: string;
 		mountPoint: string;
 		mountType?: 'volume' | 'bind';
+		source?: string;
 	}
 
 	interface Props {
@@ -81,6 +82,9 @@
 					/>
 					<MountTypeBadge type={vol.mountType} size="sm" />
 						<span class="font-mono truncate">{vol.name}</span>
+						{#if vol.source && vol.source !== vol.name}
+							<span class="text-muted-foreground font-mono truncate">from {vol.source}</span>
+						{/if}
 						{#if vol.mountPoint}
 							<span class="text-muted-foreground ml-auto truncate">{vol.mountPoint}</span>
 						{/if}

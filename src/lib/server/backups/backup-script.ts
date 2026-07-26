@@ -42,10 +42,14 @@ export interface MetadataFile {
  *                   tag/exclude/flag-assembled by the caller.
  */
 export function buildBackupScript(resticArgs: string[]): string {
-	// Turn off `set -e` for the restic step so exit 3 (partial) doesn't abort
-	// before the marker is printed; the marker carries the real code.
+	// restic runs backgrounded so the SIGINT-forwarding trap can reach it on cancel
+	// (SIGINT lets restic release its repo lock; a SIGKILL orphans it and hangs the
+	// next backup on --retry-lock). The kill-0 re-wait loop only fires when a signal
+	// interrupted the first `wait` early; a normal exit skips it, keeping restic's
+	// real code (0/3) for the marker.
 	const restic = `restic ${resticArgs.map(shellQuote).join(' ')}`;
-	return `mkdir -p /metadata; set +e; ${finishScript(restic)}`;
+	const step = `${restic} & __rpid=$!; trap 'kill -INT $__rpid 2>/dev/null' INT TERM; wait $__rpid; __rc=$?; while kill -0 $__rpid 2>/dev/null; do wait $__rpid; __rc=$?; done; ( exit $__rc )`;
+	return `mkdir -p /metadata; set +e; ${finishScript(step)}`;
 }
 
 /**

@@ -42,8 +42,9 @@ import { unregisterSchedule } from './scheduler';
 import { sendEventNotification } from './notifications';
 import { deleteGitStackFiles, parseEnvFileContent } from './git';
 import { cleanPem } from '$lib/utils/pem';
-import { rewriteComposeVolumePaths, getHostDataDir, findRelativeBindSources } from './host-path';
+import { rewriteComposeVolumePaths, getHostDataDir } from './host-path';
 import { getOrderValue } from './container-labels';
+import { pendingRowsToClear } from './pending-updates-core';
 
 // =============================================================================
 // TYPES
@@ -1039,26 +1040,6 @@ async function executeLocalCompose(
 				console.log(`${logPrefix} [HostPath] ${line}`);
 			}
 			console.log(`${logPrefix} [HostPath] ----------------------------------------`);
-		}
-	}
-
-	// Cross-env safety check: if we're targeting a remote daemon (DOCKER_HOST
-	// set) and the compose has relative bind sources (./X, ../X), refuse the
-	// 'up' deploy with an actionable error. Otherwise docker compose expands
-	// ./X against Dockhand's CWD and asks the REMOTE daemon to bind that path,
-	// which silently creates an empty directory on the remote — the service
-	// starts with no data and the deploy reports success. (Other operations
-	// like down/stop/restart don't bind anything, so they pass through.)
-	if (dockerHost && operation === 'up') {
-		const relativeBinds = findRelativeBindSources(finalComposeContent);
-		if (relativeBinds.length > 0) {
-			const message = `This stack uses relative bind mounts (${relativeBinds.join(', ')}) which cannot be deployed to a remote Docker environment. The source paths are resolved on Dockhand's filesystem, not on the target host's. To fix: convert the bind mounts to named volumes, or use absolute paths that exist on the target host.`;
-			console.log(`${logPrefix} REFUSED: ${message}`);
-			return {
-				success: false,
-				output: '',
-				error: message
-			};
 		}
 	}
 
@@ -2562,6 +2543,45 @@ async function notifyStackDeploy(name: string, envId: number | null | undefined,
 }
 
 /**
+ * After a pulled stack redeploy, clear the dashboard "pending update" rows for this
+ * stack's containers now on the newest local image (#1311). Fire-and-forget: fully
+ * wrapped so nothing here can affect the already-succeeded deploy; only DELETEs rows.
+ */
+async function reconcileStackPendingUpdates(stackName: string, envId: number): Promise<void> {
+	try {
+		const pending = await getPendingContainerUpdates(envId);
+		if (!pending || pending.length === 0) return;
+
+		const { listContainers, getImageIdByTag } = await import('./docker.js');
+		const containers = await listContainers(true, envId);
+		const live = containers.map((c) => ({
+			name: c.name,
+			imageId: c.imageId,
+			project: c.labels?.['com.docker.compose.project']
+		}));
+
+		// Resolve each distinct pending tag to its newest local image id once.
+		const tagCache = new Map<string, string | null>();
+		for (const p of pending) {
+			if (!tagCache.has(p.currentImage)) {
+				try {
+					tagCache.set(p.currentImage, await getImageIdByTag(p.currentImage, envId));
+				} catch {
+					tagCache.set(p.currentImage, null); // unresolvable → keep (fail-safe)
+				}
+			}
+		}
+
+		const toClear = pendingRowsToClear(pending, live, (tag) => tagCache.get(tag) ?? null, stackName);
+		for (const id of toClear) {
+			await removePendingContainerUpdate(envId, id).catch(() => {});
+		}
+	} catch {
+		// Never let update-badge cleanup affect a deploy that already succeeded.
+	}
+}
+
+/**
  * Deploy a stack (create or update)
  * Uses stack locking to prevent concurrent deployments.
  */
@@ -2763,6 +2783,16 @@ export async function deployStack(options: DeployStackOptions): Promise<StackOpe
 		// path funnels through, so all of them notify (#1295). A git deploy suppresses the
 		// stack_* notification (deployGitStack sends git_sync_*).
 		await notifyStackDeploy(name, envId, result, isGitDeploy ?? false);
+
+		// Clear stale pending-update badges (#1311). Fire-and-forget with a timeout so a
+		// slow Docker API can't delay or affect the already-succeeded deploy.
+		if (result.success && pullPolicy && typeof envId === 'number') {
+			const envIdNum = envId;
+			void Promise.race([
+				reconcileStackPendingUpdates(name, envIdNum),
+				new Promise<void>((resolve) => setTimeout(resolve, 15000))
+			]).catch(() => {});
+		}
 		return result;
 	});
 }
