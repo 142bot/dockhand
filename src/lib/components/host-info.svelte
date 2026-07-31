@@ -9,7 +9,7 @@
 	import { toast } from 'svelte-sonner';
 	import { themeStore, type FontSize } from '$lib/stores/theme';
 	import { formatBytes } from '$lib/utils/format';
-	import { getTimeFormat } from '$lib/stores/settings';
+	import { getTimeFormat, getDefaultTimezone } from '$lib/stores/settings';
 
 	// Font size scaling for header
 	let fontSize = $state<FontSize>('normal');
@@ -332,8 +332,13 @@
 		hostInfo ? ((hostInfo.totalMemory - hostInfo.freeMemory) / hostInfo.totalMemory) * 100 : 0
 	);
 
+	// Prefer the environment's own timezone; fall back to the GLOBAL default-timezone
+	// setting (not a hard-coded UTC). An env only STORES a timezone when it differs from
+	// the global default (EnvironmentModal: "save if not default"), so a plain env has no
+	// stored timezone and must inherit the user's chosen default here, not show UTC (#1340).
 	let currentTimezone = $derived(
-		$environments.find((e: Environment) => Number(e.id) === Number(currentEnvId))?.timezone ?? 'UTC'
+		$environments.find((e: Environment) => Number(e.id) === Number(currentEnvId))?.timezone
+		|| getDefaultTimezone()
 	);
 
 	function formatLastUpdated(date: Date, timezone: string): string {
