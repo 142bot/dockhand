@@ -10,7 +10,7 @@
 	import CronEditor from '$lib/components/cron-editor.svelte';
 	import { Package, Box, Layers, Search, Loader2, CheckCircle2, ArrowBigRight, Settings, Clock, Play } from 'lucide-svelte';
 	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
-	import { getRepoTypeIcon, formatCron, runBackupAction, isRemoteEnvironment, type BackupFormState } from '$lib/utils/backup';
+	import { getRepoTypeIcon, formatCron, runBackupAction, type BackupFormState } from '$lib/utils/backup';
 	import { toast } from 'svelte-sonner';
 	import VolumePicker from '$lib/components/backup/VolumePicker.svelte';
 	import DestinationPicker from '$lib/components/backup/DestinationPicker.svelte';
@@ -27,7 +27,7 @@
 	let { open = $bindable(), onCreated, onRun }: Props = $props();
 
 	interface Environment { id: number; name: string; icon?: string; connectionType?: string; host?: string | null; }
-	interface Destination { id: number; name: string; repository: string; }
+	interface Destination { id: number; name: string; repository: string; hostPath?: string | null; }
 	interface ContainerItem { name: string; type: 'container' | 'stack'; envId: number; envName: string; envIcon?: string; volumes: VolumeInfo[]; }
 
 	let step = $state<1 | 2 | 3>(1);
@@ -176,11 +176,9 @@
 
 	const getDestIcon = getRepoTypeIcon;
 	const selectedDest = $derived(destinations.find(d => d.id === selectedDestId));
-	// Used by the DestinationPicker to disable local-path destinations when
-	// the chosen environment is remote (helper container on the remote host
-	// can't read Dockhand's local filesystem).
+	// Passed to DestinationPicker so it can hint that a local-path repo needs the
+	// env's daemon co-located with Dockhand (advisory only, not a block).
 	const selectedEnv = $derived(environments.find((e) => e.id === selectedItem?.envId));
-	const isSelectedEnvRemote = $derived(isRemoteEnvironment(selectedEnv));
 </script>
 
 <Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen && saving) return; open = isOpen; }}>
@@ -306,7 +304,7 @@
 						<DestinationPicker
 							destinations={destinations}
 							bind:value={selectedDestId}
-							disableLocalForRemoteEnv={isSelectedEnvRemote}
+							env={selectedEnv}
 						/>
 					</div>
 

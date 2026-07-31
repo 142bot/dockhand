@@ -6,7 +6,7 @@
 	import { TogglePill } from '$lib/components/ui/toggle-pill';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Input } from '$lib/components/ui/input';
-	import { Plus, Check, RefreshCw, Wifi, Database, HardDrive, Dices, Copy, ChevronDown, BarChart3, Loader2, Clock, PackageCheck, FolderCheck, Unlock, CircleHelp, AlertTriangle } from 'lucide-svelte';
+	import { Plus, Check, RefreshCw, Wifi, Database, HardDrive, Dices, Copy, BarChart3, Loader2, Clock, PackageCheck, FolderCheck, Unlock, CircleHelp, AlertTriangle } from 'lucide-svelte';
 	import cronstrue from 'cronstrue';
 	import { formatBytes } from '$lib/utils/format';
 	import CronEditor from '$lib/components/cron-editor.svelte';
@@ -20,8 +20,10 @@
 		id: number;
 		name: string;
 		repository: string;
+		hostPath?: string | null;
 		envVars?: Record<string, string>;
 		flags?: string;
+		policies?: string | null;
 		lastTestStatus?: string | null;
 		createdAt: string;
 		updatedAt: string;
@@ -122,7 +124,7 @@
 			fields: [
 				{ key: 'bucket', label: 'Bucket', placeholder: 'my-backup-bucket' },
 				{ key: 'path', label: 'Path (optional)', placeholder: 'dockhand' },
-				{ key: 'accountId', label: 'Account ID', placeholder: '', envKey: 'B2_ACCOUNT_ID' },
+				{ key: 'accountId', label: 'Key ID', placeholder: '', envKey: 'B2_ACCOUNT_ID' },
 				{ key: 'accountKey', label: 'Application key', placeholder: '', secret: true, envKey: 'B2_ACCOUNT_KEY' }
 			],
 			buildRepo: (f) => `b2:${f.bucket}:${f.path || ''}`.replace(/:$/, ''),
@@ -191,6 +193,11 @@
 	let policyAutoUnlock = $state(true);
 	let testing = $state(false);
 	let initializing = $state(false);
+	// Set when a Test on a NEW (unsaved) destination reports the repo reachable but
+	// not yet initialised. It flips the create button to "Save and init" so the user
+	// can save + init in one click. Reset whenever the repo fields change (a stale
+	// verdict must not drive the button after the user edits the target).
+	let needsInit = $state(false);
 
 	const selectedBackend = $derived(backendTypes.find(b => b.value === formBackendType) ?? backendTypes[0]);
 	const repoFields = $derived(selectedBackend.fields.filter(f => !f.envKey));
@@ -305,8 +312,12 @@
 			});
 			const data = await res.json();
 			if (data.success && data.needsInit) {
+				// Only the create flow gets the "Save and init" button; editing an
+				// existing destination already has its own "Init repo" action.
+				needsInit = !isEditing;
 				toast.info(data.message || 'Connection works, but repository needs initialization');
 			} else {
+				needsInit = false;
 				toast[res.ok && data.success ? 'success' : 'error'](data.success ? 'Connection test successful' : (data.error || 'Connection test failed'));
 			}
 		} catch { toast.error('Connection test failed'); } finally { testing = false; }
@@ -341,6 +352,12 @@
 	$effect(() => {
 		currentRepo; // track
 		repoConflictName = null;
+	});
+	// Any change to the target (repo string OR credentials OR password) invalidates a
+	// prior Test verdict, so the "Save and init" state must not linger.
+	$effect(() => {
+		currentRepo; formFields; formPassword; // track
+		needsInit = false;
 	});
 
 	async function save() {
@@ -389,7 +406,10 @@
 			const res = await fetch(isEditing ? `/api/backup/destinations/${destination!.id}` : '/api/backup/destinations', {
 				method: isEditing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
 			});
-			if (res.ok) { open = false; onSaved(); toast.success(isEditing ? 'Destination updated' : 'Destination created'); }
+			// Creating a destination auto-initialises its repository server-side, so a
+			// create over a reachable-but-uninitialised repo (needsInit) needs no extra
+			// call here — the button just tells the user that up front ("Save and init").
+			if (res.ok) { open = false; onSaved(); toast.success(needsInit ? 'Destination created and repository initialized' : isEditing ? 'Destination updated' : 'Destination created'); }
 			else { const data = await res.json(); formError = data.error || 'Failed'; }
 		} catch { formError = 'Failed'; } finally { formSaving = false; }
 	}
@@ -408,7 +428,7 @@
 		{#if selectedBackend.value === 'local'}
 			<div class="flex items-start gap-2 p-2.5 mt-4 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400">
 				<HardDrive class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-				<span>Local path repositories can only be used to back up and restore containers running on the same Docker host as Dockhand. For remote environments or cross-env restore, use S3, REST, or another remote backend.</span>
+				<span>Local path repositories work on the local Docker host, or a co-located socket-proxy on that same host. For remote hosts, use S3, REST, or another remote backend.</span>
 			</div>
 		{/if}
 		<div class="grid grid-cols-2 gap-6 py-4">
@@ -507,6 +527,7 @@
 				</div>
 			</div>
 		</div>
+
 
 		<!-- Policies section -->
 		<div class="border-t pt-3 mt-2 space-y-3">
@@ -657,7 +678,7 @@
 			</div>
 		{/if}
 		<Dialog.Footer class="flex-shrink-0 border-t mt-auto pt-4">
-			<div class="flex gap-2 mr-auto">
+			<div class="flex items-center gap-2 mr-auto">
 				<Button variant="outline" size="sm" onclick={testConnection} disabled={testing}>
 					{#if testing}<RefreshCw class="w-4 h-4 mr-1 animate-spin" />{:else}<Wifi class="w-4 h-4 mr-1" />{/if}
 					Test
@@ -667,12 +688,14 @@
 						{#if initializing}<RefreshCw class="w-4 h-4 mr-1 animate-spin" />{:else}<Database class="w-4 h-4 mr-1" />{/if}
 						Init repo
 					</Button>
+				{:else if needsInit}
+					<span class="text-xs text-muted-foreground">Connection OK — repository will be initialized on save.</span>
 				{/if}
 			</div>
 			<Button variant="outline" onclick={() => { open = false; onClose(); }}>Cancel</Button>
 			<Button onclick={save} disabled={formSaving} variant={repoConflictName ? 'destructive' : 'default'}>
-				{#if formSaving}<RefreshCw class="w-4 h-4 mr-1 animate-spin" />{:else if repoConflictName}<AlertTriangle class="w-4 h-4 mr-1" />{:else if isEditing}<Check class="w-4 h-4" />{:else}<Plus class="w-4 h-4" />{/if}
-				{repoConflictName ? 'Save anyway' : isEditing ? 'Save' : 'Create'}
+				{#if formSaving}<RefreshCw class="w-4 h-4 mr-1 animate-spin" />{:else if repoConflictName}<AlertTriangle class="w-4 h-4 mr-1" />{:else if needsInit && !isEditing}<Database class="w-4 h-4 mr-1" />{:else if isEditing}<Check class="w-4 h-4" />{:else}<Plus class="w-4 h-4" />{/if}
+				{repoConflictName ? 'Save anyway' : needsInit && !isEditing ? 'Create and init' : isEditing ? 'Save' : 'Create'}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

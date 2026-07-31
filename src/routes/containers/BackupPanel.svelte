@@ -22,7 +22,7 @@
 	import { formatDateTime } from '$lib/stores/settings';
 	import { watchJob } from '$lib/utils/sse-fetch';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
-	import { getRepoTypeIcon, isLocalRepo, isRemoteEnvironment, parseRetention, parseOptions, retentionSummary as getRetentionSummary, formatCron, runBackupAction, classifyJobResult, tagLogLine, fetchBackupExecutions, type BackupAction, type BackupFormState } from '$lib/utils/backup';
+	import { getRepoTypeIcon, parseRetention, parseOptions, retentionSummary as getRetentionSummary, formatCron, runBackupAction, classifyJobResult, tagLogLine, fetchBackupExecutions, type BackupAction, type BackupFormState } from '$lib/utils/backup';
 
 	interface Props {
 		containerName: string;
@@ -37,7 +37,7 @@
 
 	let { containerName, volumes, type = 'container', environmentId, onConfigSaved, autoShowRunForm = false, onTally }: Props = $props();
 
-	interface Destination { id: number; name: string; repository: string; }
+	interface Destination { id: number; name: string; repository: string; hostPath?: string | null; }
 	interface BackupConfig {
 		id: number; destinationId: number; enabled: boolean; schedule: string;
 		retention: string | null; options?: string | null; stopBeforeBackup: boolean; selectedVolumes: string[] | null;
@@ -154,7 +154,9 @@
 	const progressEnv = $derived($environments.find((e) => e.id === envId));
 
 	const envId = $derived(environmentId ?? $currentEnvironment?.id ?? null);
-	const isCurrentEnvRemote = $derived(() => isRemoteEnvironment($currentEnvironment));
+	// The full env carries connectionType/host (currentEnvironment does not), needed
+	// for the local-repo guard.
+	const fullEnv = $derived($environments.find((e) => e.id === envId));
 
 	async function fetchDestinations() {
 		try {
@@ -327,11 +329,8 @@
 	 */
 	async function submitForm(action: BackupAction) {
 		if (!editDestinationId) { toast.error('Select a backup repository'); return; }
-		const selectedDest = destinations.find(d => d.id === editDestinationId);
-		if (selectedDest && isCurrentEnvRemote() && isLocalRepo(selectedDest.repository)) {
-			toast.error('Local repositories cannot be used with remote environments');
-			return;
-		}
+		// A local repo on a non-co-located env is allowed here; it fails loud at run
+		// time via the helper's localRepoGuard rather than being blocked up front.
 		// Cron only matters when the schedule will be persisted. run-once
 		// clears it server-side so the field value is irrelevant.
 		if ((action === 'save' || action === 'save-run') && editScheduleInvalid) {
@@ -596,7 +595,7 @@
 					<DestinationPicker
 						destinations={destinations}
 						bind:value={editDestinationId}
-						disableLocalForRemoteEnv={isCurrentEnvRemote()}
+						env={fullEnv}
 						triggerClass="h-9 w-[220px] flex-shrink-0"
 					/>
 					<CronEditor bind:value={editSchedule} bind:invalid={editScheduleInvalid} />

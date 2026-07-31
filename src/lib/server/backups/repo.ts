@@ -84,19 +84,24 @@ export async function pruneRepository(restic: ResticLocal, destination: any, max
 	return toResult(run);
 }
 
-/** Remove stale repository locks left by a crashed operation. */
-export async function unlockRepository(restic: ResticLocal, destination: any): Promise<RepoResult> {
-	// `--remove-all`, not a plain `unlock`. This is an EXPLICIT, user-initiated action
-	// ("Unlock" in the UI / `task:unlock`), whose documented purpose is to "remove stale
-	// locks left behind when a previous restic operation crashed or was killed" and is
-	// "safe if no other operation is currently running against the repo". A plain
-	// `restic unlock` only removes locks it can prove stale, and it CANNOT prove that for
-	// a lock whose hostname belongs to a now-gone helper CONTAINER (restic:
-	// `if hn != l.Hostname { return false }`, then a 30-min age-out) — i.e. exactly the
-	// orphaned lock this button exists to clear. So the plain form silently failed to do
-	// what the UI/manual promise. `--remove-all` makes it actually clear those locks.
-	// Only reachable via a deliberate user/API call, never automatic retention.
-	const run = await restic.runLocal(destination, ['unlock', '--remove-all']);
+/**
+ * Remove repository locks left by a crashed operation.
+ *
+ * `removeAll` (default true) uses `restic unlock --remove-all` — clears EVERY lock,
+ * including one it cannot prove stale (an orphan whose helper-container hostname restic
+ * won't age out for 30 min). That is what the EXPLICIT user "Unlock" button needs, and
+ * it is safe only when no other op runs against the repo — the operator's call.
+ *
+ * `removeAll = false` is a plain `restic unlock`: it reaps ONLY locks restic can prove
+ * stale and LEAVES a live foreign lock intact. AUTOMATIC callers (scheduled maintenance
+ * auto-unlock) MUST use this — the per-repo serializer is per-instance and cannot see a
+ * separate instance's live lock on a shared repo, so a blind --remove-all there would
+ * silently wipe another instance's in-flight backup lock (same hazard backup-service
+ * deliberately avoids). #1313-adjacent shared-repo data-safety fix.
+ */
+export async function unlockRepository(restic: ResticLocal, destination: any, removeAll = true): Promise<RepoResult> {
+	const args = removeAll ? ['unlock', '--remove-all'] : ['unlock'];
+	const run = await restic.runLocal(destination, args);
 	return toResult(run);
 }
 

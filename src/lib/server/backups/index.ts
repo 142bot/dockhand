@@ -25,7 +25,7 @@ import { instanceTagFilter, parseSnapshots, retentionTagFilter } from './models'
 import { buildSwapRecoveryScript } from './swap';
 import { parseOptionsJson, fireWebhook, parseResticDiff, type SnapshotDiff } from './helpers';
 import { getHostname } from '../license';
-import { getBackupConfig, getBackupConfigs, getBackupDestination, updateBackupConfig, updateBackupDestination, decryptBackupDestination, getEnvironment } from '../db';
+import { getBackupConfig, getBackupConfigs, getBackupDestination, updateBackupConfig, updateBackupDestination, decryptBackupDestination } from '../db';
 import { getInstanceId } from './identity';
 import { inspectContainer } from '../docker';
 import { sendEventNotification } from '../notifications';
@@ -175,6 +175,18 @@ async function collectMetadata(
 					console.warn(`[Backup] Stack directory for "${targetName}" exceeded the backup cap (${MAX_FILES} files / ${Math.round(MAX_TOTAL_BYTES / 1024 / 1024)} MB) — only ${count} file(s) / ${bytes} byte(s) captured. The snapshot is INCOMPLETE for redeploy; reduce the stack dir or exclude large sibling files.`);
 				}
 			} catch { /* directory walk best-effort — compose/.env already captured */ }
+			// Carry the stack's secret env vars IN the snapshot so a restore reproduces a
+			// WORKING stack — secrets and all — even after the source stack (and its DB
+			// rows) are gone. Stored as their at-rest ciphertext (enc:v1:...), encrypted
+			// under THIS instance's key: a restore on the same instance decrypts them
+			// transparently; on a fresh instance the operator must carry over the same
+			// encryption key (.encryption_key / ENCRYPTION_KEY) or they stay unreadable.
+			// Values are NEVER stored plaintext (getStackSecretCiphertexts guarantees it).
+			try {
+				const { getStackSecretCiphertexts } = await import('../db');
+				const secrets = await getStackSecretCiphertexts(targetName, envId ?? null);
+				if (secrets.length > 0) metadata.secrets = secrets;
+			} catch { /* best-effort — a lookup failure just omits secrets from the snapshot */ }
 			// Rewrite metadata.json with hasStackFiles set.
 			files[0] = { path: 'metadata.json', contentBase64: Buffer.from(JSON.stringify(metadata, null, 2)).toString('base64') };
 		}
@@ -224,6 +236,89 @@ function backupPorts(destination: any, onProgress?: (status: string, message: st
 // =============================================================================
 // RestorePorts — the real implementation, bound to one destination + access ctx
 // =============================================================================
+/**
+ * Extract a snapshot's captured stack files (/metadata/stacks/<name>/stackfiles/) into
+ * `targetPath` under the stacks root, with a path-traversal guard, a data-loss guard
+ * (an empty extraction never wipes the live dir), and an atomic staging-swap so a
+ * mid-copy failure can't leave the dir half-written. Returns false (no-op) when the
+ * snapshot has no stackfiles. Shared by the writeLocalStackFiles port and the restore
+ * redeploy path (which materialises into the CANONICAL stack dir). `destination` is
+ * already resolved by the caller.
+ */
+async function materialiseStackFiles(destination: any, snapId: string, stackName: string, targetPath: string, overwrite: boolean): Promise<boolean> {
+	const { mkdtempSync, mkdirSync, rmSync, existsSync, cpSync, readdirSync, renameSync } = await import('fs');
+	const { tmpdir } = await import('os');
+	const { join, dirname, resolve, sep } = await import('path');
+	const { randomUUID } = await import('crypto');
+	const { getStacksDir } = await import('../stacks');
+	// Use `restic restore --include` (not dump→tar): restore writes a
+	// DETERMINISTIC path under the target — <tmp>/metadata/stacks/<name>/
+	// stackfiles/ — so there's no tar-prefix guessing.
+	const tmp = mkdtempSync(join(tmpdir(), 'dh-stackfiles-'));
+	console.log(`[Backup] materialiseStackFiles: "${stackName}" snapshot=${snapId} → extract to ${tmp}, then swap into ${targetPath} (overwrite=${overwrite})`);
+	try {
+		const include = `/metadata/stacks/${stackName}/stackfiles`;
+		const run = await restic.runLocal(destination, ['restore', snapId, '--target', tmp, '--include', include], 'data');
+		if (run.exitCode !== 0) {
+			console.log(`[Backup] materialiseStackFiles: restic restore failed for "${stackName}": ${run.stderr.trim() || `exit ${run.exitCode}`}`);
+			return false;
+		}
+		const extractedDir = join(tmp, 'metadata', 'stacks', stackName, 'stackfiles');
+		// DATA-LOSS guard: only proceed if extraction actually produced files.
+		const extracted = existsSync(extractedDir) ? readdirSync(extractedDir) : [];
+		if (extracted.length === 0) {
+			console.log(`[Backup] materialiseStackFiles: no stackfiles extracted for "${stackName}" (snapshot may predate full-dir capture) — leaving ${targetPath} untouched`);
+			return false;
+		}
+
+		// Path-traversal guard: the resolved target MUST stay under the stacks root.
+		const resolvedTarget = resolve(targetPath);
+		const stacksRoot = resolve(getStacksDir());
+		if (resolvedTarget !== stacksRoot && !resolvedTarget.startsWith(stacksRoot + sep)) {
+			console.log(`[Backup] materialiseStackFiles: refusing target "${resolvedTarget}" outside the stacks root "${stacksRoot}"`);
+			return false;
+		}
+
+		mkdirSync(resolvedTarget, { recursive: true });
+
+		// Atomic staging-swap: build the desired contents in a sibling staging dir
+		// FIRST, then swap it into place with a same-parent rename. On OVERWRITE the
+		// staging holds ONLY the restored files; on merge it starts as a copy of live.
+		const parent = dirname(resolvedTarget);
+		const staging = mkdtempSync(join(parent, '.dockhand-stack-new-'));
+		const oldAside = join(parent, `.dockhand-stack-old-${randomUUID()}`);
+		try {
+			if (!overwrite) {
+				for (const existing of readdirSync(resolvedTarget)) {
+					cpSync(join(resolvedTarget, existing), join(staging, existing), { recursive: true, force: true });
+				}
+			}
+			for (const entry of extracted) {
+				cpSync(join(extractedDir, entry), join(staging, entry), { recursive: true, force: true });
+			}
+			renameSync(resolvedTarget, oldAside);
+			try {
+				renameSync(staging, resolvedTarget);
+			} catch (swapErr) {
+				try { renameSync(oldAside, resolvedTarget); } catch { /* best effort */ }
+				throw swapErr;
+			}
+			rmSync(oldAside, { recursive: true, force: true });
+			console.log(`[Backup] materialiseStackFiles: wrote ${extracted.length} entries to ${resolvedTarget} (${overwrite ? 'replaced' : 'merged'})`);
+			return true;
+		} catch (copyErr) {
+			try { rmSync(staging, { recursive: true, force: true }); } catch { /* best effort */ }
+			if (existsSync(oldAside) && !existsSync(resolvedTarget)) {
+				try { renameSync(oldAside, resolvedTarget); } catch { /* best effort */ }
+			}
+			try { rmSync(oldAside, { recursive: true, force: true }); } catch { /* best effort */ }
+			throw copyErr;
+		}
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
 function restorePorts(destination: any, access: { isEnterprise: boolean; canAccessEnvironment: (id: number) => Promise<boolean> }, onProgress?: (status: string, message: string) => void): RestorePorts {
 	const run = boundRunner(destination);
 	return {
@@ -313,11 +408,14 @@ function restorePorts(destination: any, access: { isEnterprise: boolean; canAcce
 		// sibling configs referenced by relative paths resolve, and the file keeps its
 		// real name (e.g. immich.yaml). The backup always captures the full dir plus the
 		// recorded compose filename, so there is no normalized-compose.yaml fallback.
-		redeployStack: async (name, envId, destId, snapId) => {
-			const { redeployStackFromDir } = await import('../stacks');
-			const { mkdtempSync, rmSync, existsSync, readdirSync } = await import('fs');
-			const { tmpdir } = await import('os');
+		redeployStack: async (name, envId, destId, snapId, restoreSecrets) => {
+			const { redeployStackFromDir, getStackDir } = await import('../stacks');
+			const { existsSync } = await import('fs');
 			const { join } = await import('path');
+			const { upsertStackSource } = await import('../db');
+
+			const log = (msg: string) => console.log(`[Restore:redeploy ${name}] ${msg}`);
+			log(`start: env=${envId ?? 'local'} destination=${destId} snapshot=${snapId}`);
 
 			const meta = await getSnapshotMetadata(destId, snapId);
 			const composeFileName = meta && typeof meta.composeFileName === 'string' ? meta.composeFileName : '';
@@ -325,21 +423,57 @@ function restorePorts(destination: any, access: { isEnterprise: boolean; canAcce
 				throw new Error('snapshot has no recorded compose filename; cannot redeploy this stack');
 			}
 
-			const destination = await loadDest(destId);
-			const tmp = mkdtempSync(join(tmpdir(), 'dh-redeploy-'));
-			try {
-				const include = `/metadata/stacks/${name}/stackfiles`;
-				const run = await restic.runLocal(destination, ['restore', snapId, '--target', tmp, '--include', include], 'data');
-				const extractedDir = join(tmp, 'metadata', 'stacks', name, 'stackfiles');
-				const extractedNames = run.exitCode === 0 && existsSync(extractedDir) ? readdirSync(extractedDir) : [];
-				if (!extractedNames.includes(composeFileName)) {
-					throw new Error(`snapshot stackfiles/ is missing the compose file "${composeFileName}"; cannot redeploy`);
+			// Restore the stack's secrets FROM THE SNAPSHOT (opt-in, default on). They are
+			// stored as at-rest ciphertext encrypted under this instance's key; writing
+			// them into the TARGET env's DB before redeploy lets redeployStackFromDir's
+			// normal secret injection pick them up. setStackEnvVars re-runs encrypt(),
+			// which is a pass-through for an already-encrypted value, so the ciphertext is
+			// stored verbatim (no double-encryption). On a different instance without the
+			// matching key these values won't decrypt — the restore UI warns about that.
+			if (restoreSecrets && Array.isArray(meta?.secrets) && meta.secrets.length > 0) {
+				const { setStackEnvVars } = await import('../db');
+				const secrets = meta.secrets
+					.filter((s: any) => s && typeof s.key === 'string' && typeof s.value === 'string')
+					.map((s: any) => ({ key: s.key, value: s.value, isSecret: true }));
+				if (secrets.length > 0) {
+					await setStackEnvVars(name, envId ?? null, secrets);
+					log(`restored ${secrets.length} secret(s) from snapshot → env ${envId ?? 'local'}`);
 				}
-				const r = await redeployStackFromDir(name, extractedDir, composeFileName, envId ?? undefined);
-				if (!r.success) throw new Error(r.error || 'docker compose up failed');
-			} finally {
-				try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }
 			}
+
+			// Materialise the snapshot's stack files into the CANONICAL stack dir
+			// (stacks/<envName>/<stackName>/) — where every managed stack lives — and
+			// bring the stack up FROM THERE, so after a restore (even one that deleted
+			// the stack completely) it is a normal managed stack on disk, not a
+			// throwaway /tmp copy (#1329). writeLocalStackFiles carries the path-
+			// traversal + data-loss + atomic-swap guards; overwrite=true because an
+			// in-place restore is destructive by design.
+			const stackDir = await getStackDir(name, envId ?? undefined);
+			const destination = await loadDest(destId);
+			log(`materialising snapshot stackfiles → canonical dir: ${stackDir} (compose: ${composeFileName})`);
+			const wrote = await materialiseStackFiles(destination, snapId, name, stackDir, true);
+			if (!wrote || !existsSync(join(stackDir, composeFileName))) {
+				throw new Error(`could not materialise stack files for "${name}" into ${stackDir}; cannot redeploy`);
+			}
+			log(`materialised OK → ${stackDir}`);
+
+			log(`redeploying (docker compose up) from: ${stackDir}`);
+			const r = await redeployStackFromDir(name, stackDir, composeFileName, envId ?? undefined);
+			if (!r.success) throw new Error(r.error || 'docker compose up failed');
+			log(`redeploy OK`);
+
+			// Register the restored stack as managed (internal) so the UI can
+			// edit/redeploy it — a complete-delete-then-restore must come back managed.
+			const composePath = join(stackDir, composeFileName);
+			const envPath = existsSync(join(stackDir, '.env')) ? join(stackDir, '.env') : null;
+			await upsertStackSource({
+				stackName: name,
+				environmentId: envId ?? null,
+				sourceType: 'internal',
+				composePath,
+				envPath
+			});
+			log(`registered as managed (internal): composePath=${composePath} envPath=${envPath ?? '(none)'}`);
 		},
 		readSnapshotMetadata: (destId, snapId) => getSnapshotMetadata(destId, snapId),
 		// Materialise the snapshot's captured stack files into Dockhand's LOCAL data
@@ -347,88 +481,8 @@ function restorePorts(destination: any, access: { isEnterprise: boolean; canAcce
 		// files were backed up under /metadata/stacks/<name>/stackfiles/; dump that
 		// subtree as a tar and extract it flat into targetPath.
 		writeLocalStackFiles: async (destId, snapId, stackName, targetPath, overwrite) => {
-			const { mkdtempSync, mkdirSync, rmSync, existsSync, cpSync, readdirSync, renameSync } = await import('fs');
-			const { tmpdir } = await import('os');
-			const { join, dirname, resolve, sep } = await import('path');
-			const { randomUUID } = await import('crypto');
-			const { getStacksDir } = await import('../stacks');
-			// Use `restic restore --include` (not dump→tar): restore writes a
-			// DETERMINISTIC path under the target — <tmp>/metadata/stacks/<name>/
-			// stackfiles/ — so there's no tar-prefix guessing. Mirrors the proven
-			// approach the previous engine used (commit 5edcfa07 et al.).
 			const destination = await loadDest(destId);
-			const tmp = mkdtempSync(join(tmpdir(), 'dh-stackfiles-'));
-			try {
-				const include = `/metadata/stacks/${stackName}/stackfiles`;
-				const run = await restic.runLocal(destination, ['restore', snapId, '--target', tmp, '--include', include], 'data');
-				if (run.exitCode !== 0) {
-					console.log(`[Backup] writeLocalStackFiles: restic restore failed for "${stackName}": ${run.stderr.trim() || `exit ${run.exitCode}`}`);
-					return false;
-				}
-				const extractedDir = join(tmp, 'metadata', 'stacks', stackName, 'stackfiles');
-				// DATA-LOSS guard: only proceed if extraction actually produced files.
-				// A snapshot that predates full-dir capture, or a corrupt path, yields
-				// nothing — replacing the live dir with an empty one would be data loss.
-				const extracted = existsSync(extractedDir) ? readdirSync(extractedDir) : [];
-				if (extracted.length === 0) {
-					console.log(`[Backup] writeLocalStackFiles: no stackfiles extracted for "${stackName}" (snapshot may predate full-dir capture) — leaving ${targetPath} untouched`);
-					return false;
-				}
-
-				// Path-traversal guard: the resolved target MUST stay under the stacks
-				// root before any mkdir/rename/rm — a "../.." name must never let a
-				// restore wipe an arbitrary directory.
-				const resolvedTarget = resolve(targetPath);
-				const stacksRoot = resolve(getStacksDir());
-				if (resolvedTarget !== stacksRoot && !resolvedTarget.startsWith(stacksRoot + sep)) {
-					console.log(`[Backup] writeLocalStackFiles: refusing target "${resolvedTarget}" outside the stacks root "${stacksRoot}"`);
-					return false;
-				}
-
-				mkdirSync(resolvedTarget, { recursive: true });
-
-				// Atomic staging-swap (audit #3 / HIGH #2): build the desired contents
-				// in a sibling staging dir FIRST, then swap it into place with a
-				// same-parent rename, so a mid-copy failure can never leave the live
-				// stack dir half-wiped. On OVERWRITE the staging holds ONLY the restored
-				// files (stale files cleared); on merge it starts as a copy of the live
-				// dir so existing user files are preserved.
-				const parent = dirname(resolvedTarget);
-				const staging = mkdtempSync(join(parent, '.dockhand-stack-new-'));
-				const oldAside = join(parent, `.dockhand-stack-old-${randomUUID()}`);
-				try {
-					if (!overwrite) {
-						for (const existing of readdirSync(resolvedTarget)) {
-							cpSync(join(resolvedTarget, existing), join(staging, existing), { recursive: true, force: true });
-						}
-					}
-					for (const entry of extracted) {
-						cpSync(join(extractedDir, entry), join(staging, entry), { recursive: true, force: true });
-					}
-					// Copy fully succeeded — same-parent swap: live aside, staging in.
-					renameSync(resolvedTarget, oldAside);
-					try {
-						renameSync(staging, resolvedTarget);
-					} catch (swapErr) {
-						try { renameSync(oldAside, resolvedTarget); } catch { /* best effort */ }
-						throw swapErr;
-					}
-					rmSync(oldAside, { recursive: true, force: true });
-					console.log(`[Backup] writeLocalStackFiles: wrote ${extracted.length} entries to ${resolvedTarget} (${overwrite ? 'replaced' : 'merged'})`);
-					return true;
-				} catch (copyErr) {
-					// Fail closed: clean up staging/aside, restore the live dir if the
-					// swap left it moved, and rethrow so the restore reports FAILED.
-					try { rmSync(staging, { recursive: true, force: true }); } catch { /* best effort */ }
-					if (existsSync(oldAside) && !existsSync(resolvedTarget)) {
-						try { renameSync(oldAside, resolvedTarget); } catch { /* best effort */ }
-					}
-					try { rmSync(oldAside, { recursive: true, force: true }); } catch { /* best effort */ }
-					throw copyErr;
-				}
-			} finally {
-				rmSync(tmp, { recursive: true, force: true });
-			}
+			return materialiseStackFiles(destination, snapId, stackName, targetPath, overwrite);
 		},
 		// --- clone (cross-env restore) -----------------------------------------------
 		volumeExists: async (name, envId) => {
@@ -499,7 +553,7 @@ export async function previewSnapshot(
 	destinationId: number,
 	snapshotId: string,
 	access: { isEnterprise: boolean; canAccessEnvironment: (id: number) => Promise<boolean> } = { isEnterprise: false, canAccessEnvironment: async () => true },
-): Promise<{ snapshotId: string; volumes: string[]; volumeTypes: Record<string, 'volume' | 'bind'>; volumeSources: Record<string, string>; backupTime: string | null; sourceEnvironmentId: number | null; hasMetadata: boolean; hasStackFiles: boolean }> {
+): Promise<{ snapshotId: string; volumes: string[]; volumeTypes: Record<string, 'volume' | 'bind'>; volumeSources: Record<string, string>; backupTime: string | null; sourceEnvironmentId: number | null; hasMetadata: boolean; hasStackFiles: boolean; sourceSecretKeys: string[] }> {
 	const destination = await getBackupDestination(destinationId);
 	if (!destination) throw new Error('backup destination not found');
 	const instanceId = await getInstanceId();
@@ -518,6 +572,13 @@ export async function previewSnapshot(
 	const volumeSources: Record<string, string> = {};
 	let backupTime: string | null = null;
 	let sourceEnvironmentId: number | null = null;
+	// Names (never values) of the secret env vars carried IN the snapshot for this stack.
+	// The restore UI lists these under the "restore secrets from this backup" toggle so
+	// the operator sees exactly which secrets come back. The VALUES live in the snapshot
+	// as ciphertext (never exposed here) and are written to the DB by redeployStack.
+	let sourceSecretKeys: string[] = [];
+	let mdType: string | null = null;
+	let mdTargetName: string | null = null;
 	if (hasMetadata) {
 		const dump = await restic.runLocal(destination, ['dump', '--no-lock', snapshotId, '/metadata/metadata.json']);
 		if (dump.exitCode === 0) {
@@ -525,6 +586,13 @@ export async function previewSnapshot(
 				const md = JSON.parse(dump.stdout);
 				backupTime = md?.backupTime ?? null;
 				sourceEnvironmentId = typeof md?.environmentId === 'number' ? md.environmentId : null;
+				mdType = typeof md?.type === 'string' ? md.type : null;
+				mdTargetName = typeof md?.targetName === 'string' ? md.targetName : null;
+				if (Array.isArray(md?.secrets)) {
+					sourceSecretKeys = md.secrets
+						.map((s: any) => s?.key)
+						.filter((k: unknown): k is string => typeof k === 'string');
+				}
 				for (const v of md?.volumes ?? []) {
 					// Key by v.key — that's what listSnapshotVolumes returns (the /volumes/<key>
 					// segment) and what the restore UI indexes on. For a bind, key !== name
@@ -537,7 +605,7 @@ export async function previewSnapshot(
 			} catch { /* leave types empty on malformed metadata */ }
 		}
 	}
-	return { snapshotId, volumes, volumeTypes, volumeSources, backupTime, sourceEnvironmentId, hasMetadata, hasStackFiles };
+	return { snapshotId, volumes, volumeTypes, volumeSources, backupTime, sourceEnvironmentId, hasMetadata, hasStackFiles, sourceSecretKeys };
 }
 
 // --- snapshot reads (routes already apply the env guard; we add instance own.) ---
@@ -702,25 +770,25 @@ export type RepoTask = 'unlock' | 'check' | 'prune' | 'stats' | 'repair-index' |
 /** Run a repo-maintenance task. Returns { success } for the route + activity log. */
 export interface RepoStats { totalSize: number; totalFiles: number; snapshots: number }
 
-export async function runRepoTask(destinationId: number, task: RepoTask, opts?: { maxUnused?: string; dataSubset?: string }): Promise<{ success: boolean; output?: string; error?: string; stats?: RepoStats }> {
+export async function runRepoTask(destinationId: number, task: RepoTask, opts?: { maxUnused?: string; dataSubset?: string; staleOnly?: boolean }): Promise<{ success: boolean; output?: string; error?: string; stats?: RepoStats }> {
 	const destination = await loadDest(destinationId);
 	if (task === 'repair-index' || task === 'repair-snapshots') {
 		const sub = task === 'repair-index' ? 'index' : 'snapshots';
-		// repair takes the repo lock — serialize against a concurrent backup to the same repo.
-		const run = await serializeByRepo(destinationId, () => restic.runLocal(destination, ['repair', sub], 'data'));
+		// repair takes the repo lock — serialize against a concurrent backup to the same
+		// repo, and --retry-lock so a legitimately-running cross-instance backup doesn't
+		// make repair fail REPO_LOCKED (parity with prune/forget).
+		const run = await serializeByRepo(destinationId, () => restic.runLocal(destination, ['repair', sub, '--retry-lock', '5m'], 'data'));
 		logRepoOp(destination.name, `repair ${sub}`, run.exitCode === 0, { output: run.stdout, error: run.stderr });
 		return run.exitCode === 0 ? { success: true, output: run.stdout.trim() } : { success: false, error: run.stderr.trim() || 'repair failed' };
 	}
 	// prune/check hold the repo lock; run them serialized on the destination so a
 	// scheduled maintenance pass can't collide with a backup writing to the same repo.
-	// unlock is ALSO serialized: it now uses `--remove-all` (see unlockRepository), so
-	// running it unserialized could wipe the LIVE lock of a concurrent backup/restore on
-	// the same repo in THIS instance. Serializing means the only locks it clears are
-	// orphans (dead owners) — exactly its documented job. stats (--no-lock) is read-safe
-	// and stays unserialized.
+	// unlock: the EXPLICIT user action uses `--remove-all`; an AUTOMATIC caller passes
+	// staleOnly (plain unlock) so it never wipes a live foreign lock on a shared repo.
+	// stats (--no-lock) is read-safe and stays unserialized.
 	const r = task === 'prune' ? await serializeByRepo(destinationId, () => pruneRepository(reader(), destination, opts?.maxUnused))
 		: task === 'check' ? await serializeByRepo(destinationId, () => checkRepository(reader(), destination, opts?.dataSubset))
-		: task === 'unlock' ? await serializeByRepo(destinationId, () => unlockRepository(reader(), destination))
+		: task === 'unlock' ? await serializeByRepo(destinationId, () => unlockRepository(reader(), destination, !opts?.staleOnly))
 		: await repoStats(reader(), destination);
 	logRepoOp(destination.name, task, r.ok, r.ok ? { output: r.output } : { error: r.error });
 	if (!r.ok) return { success: false, error: r.error };
@@ -924,18 +992,6 @@ async function runBackupRegistered(configId: number, triggeredBy: 'cron' | 'manu
 
 /** Run a restore. The route layer has already validated the request + auth and
  * supplies the caller's access context for the ownership guard. */
-/** A filesystem repo (absolute or relative path) rather than a remote backend. */
-function isLocalRepo(repository: string): boolean {
-	return repository.startsWith('/') || repository.startsWith('./');
-}
-/** An environment whose Docker daemon is NOT Dockhand's own host. */
-function isRemoteEnv(connectionType?: string | null, host?: string | null): boolean {
-	if (!connectionType) return false;
-	if (connectionType === 'hawser-standard' || connectionType === 'hawser-edge') return true;
-	if (connectionType === 'direct' && !!host) return true;
-	return false;
-}
-
 export async function runRestore(
 	job: RestoreJob,
 	access: { isEnterprise: boolean; canAccessEnvironment: (id: number) => Promise<boolean> } = { isEnterprise: false, canAccessEnvironment: async () => true },
@@ -944,18 +1000,9 @@ export async function runRestore(
 	const destination = await getBackupDestination(job.destinationId);
 	if (!destination) return { status: 'error', code: 'VALIDATION', error: 'backup destination not found' };
 
-	// A local filesystem repository lives on Dockhand's own host and is bind-mounted
-	// into the restore helper. That only works when the helper runs on the same host
-	// (socket env); on a remote environment the repo path doesn't exist, so the
-	// restore would fail deep in restic. Reject it up front with a clear message —
-	// mirrors the same guard on the backup-config path.
-	if (job.environmentId != null && isLocalRepo(destination.repository)) {
-		const env = await getEnvironment(job.environmentId);
-		if (env && isRemoteEnv(env.connectionType, env.host)) {
-			return { status: 'error', code: 'VALIDATION', error: `Local repository "${destination.name}" cannot restore to remote environment "${env.name}" — the repository path only exists on Dockhand's host. Use an S3 or REST destination for cross-host restores.` };
-		}
-	}
-
+	// A local-path repo is allowed on any env: the restore helper (on the target
+	// daemon) fails loud via the localRepoGuard if the repo isn't visible there
+	// (wrong-host mount), so no silent bad restore — see restic-script.ts.
 	return new RestoreService(restorePorts(destination, access, onProgress)).run(job, 'manual');
 }
 

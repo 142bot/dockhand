@@ -7,24 +7,11 @@ import {
 	updateBackupDestination,
 	deleteBackupDestination,
 	decryptBackupDestination,
-	getBackupConfigs,
-	getEnvironment
+	getBackupConfigs
 } from '$lib/server/db';
 import { registerSchedule, unregisterSchedule } from '$lib/server/scheduler';
 import { validatePolicySchedules, validateRepositoryForSave, validateFlags } from '$lib/server/backups/helpers';
 import { destinationHasRunningBackup } from '$lib/server/backups';
-
-// Inlined predicates (kept in sync with the config routes) — see
-// configs/+server.ts. A local repo cannot back up a remote environment.
-function isLocalRepo(repository: string): boolean {
-	return repository.startsWith('/') || repository.startsWith('./');
-}
-function isRemoteEnv(connectionType?: string | null, host?: string | null): boolean {
-	if (!connectionType) return false;
-	if (connectionType === 'hawser-standard' || connectionType === 'hawser-edge') return true;
-	if (connectionType === 'direct' && !!host) return true;
-	return false;
-}
 
 /**
  * Single-destination response shape. envVars (decrypted cloud credentials) are
@@ -98,23 +85,8 @@ export const PUT: RequestHandler = async (event) => {
 	const flagError = validateFlags(body.flags);
 	if (flagError) return json({ error: flagError }, { status: 400 });
 
-	// (audit #8) Changing the repository to a LOCAL path bypasses the config-route
-	// guard: refuse if any config on this destination targets a remote environment
-	// (the restic helper runs on the remote daemon, which can't see Dockhand's fs).
-	const effectiveRepository = body.repository !== undefined ? body.repository : existing.repository;
-	if (body.repository !== undefined && isLocalRepo(effectiveRepository)) {
-		const configs = await getBackupConfigs();
-		const envIds = [...new Set(
-			configs.filter((c: any) => c.destinationId === id && c.environmentId).map((c: any) => c.environmentId as number)
-		)];
-		const envs = await Promise.all(envIds.map((eid) => getEnvironment(eid)));
-		const remote = envs.find((env) => env && isRemoteEnv(env.connectionType, env.host));
-		if (remote) {
-			return json({
-				error: `Local repository cannot back up containers on remote environment "${remote.name}". Use S3, REST, or another non-local backend.`
-			}, { status: 400 });
-		}
-	}
+	// A local-path repo is allowed on any env; a wrong-host mount fails loud via
+	// the helper's localRepoGuard at backup/restore time.
 
 	try {
 		const updated = await updateBackupDestination(id, {

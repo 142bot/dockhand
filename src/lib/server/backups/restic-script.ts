@@ -1,15 +1,8 @@
 /**
- * backups/restic-script.ts — pure helpers for building the shell command a
- * restic helper container runs, and reading its exit code back. No I/O, no DB,
- * no docker — so these are unit-testable in isolation (the Restic class in
- * ./restic that uses them is the side-effecting edge).
- *
- * Why an exit marker instead of relying on the container's exit code: restic's
- * `backup` exit code 3 ("could not read all source files") is a partial-but-
- * valid outcome we must be able to see as a warning rather than a hard failure.
- * The helper script captures restic's real exit code and prints it as its final
- * stdout line; the caller reads it back. The container's own shell always exits
- * 0 so the docker layer doesn't treat a mere restic non-zero as a helper crash.
+ * Pure builders for the restic helper container's shell command + reading its
+ * exit code back. The exit marker preserves restic's real code (esp. exit 3 =
+ * partial backup, a warning not a failure) since the helper's shell always
+ * exits 0 so docker doesn't treat a restic non-zero as a crash.
  */
 
 /** The marker line the helper prints carrying restic's real exit code. */
@@ -26,26 +19,47 @@ export function resticCommand(args: string[]): string {
 }
 
 /**
- * Wrap a command so it runs, captures its exit code, and prints the exit marker
- * as the FINAL stdout line — regardless of success or failure. The command runs
- * WITHOUT `set -e` so a restic non-zero (e.g. exit 3) doesn't abort before the
- * marker is printed.
- *
- * CONSTRAINT: `command` must RETURN its status (which restic and `sh -c '...'`
- * do), not terminate the shell with a bare `exit N` — a bare exit ends the whole
- * script before the marker line runs, and the caller would then read `undefined`
- * (treated as an unknown-outcome failure). When composing a multi-step session
- * script, wrap a step whose failure must be caught in a subshell `( ... )` or
- * `sh -c '...'` rather than letting `set -e` / `exit` end the wrapper.
+ * Append the exit marker after `command` so the caller reads its real code.
+ * GOTCHA: `command` must RETURN its status, not `exit N` - a bare exit ends the
+ * script before the marker prints, and the caller reads `undefined` (= failure).
+ * Wrap a step that might `exit`/`set -e` in a subshell `( ... )`.
  */
 export function finishScript(command: string): string {
 	return `${command}; __rc=$?; echo "${EXIT_MARKER}\${__rc}"`;
 }
 
 /**
+ * Fail loud if a bind-mounted local repo isn't visible on the target daemon's
+ * host: Docker would auto-create the missing path empty, silently backing up to
+ * the wrong host. '' for non-local repos (they never bind a path).
+ */
+export function localRepoGuard(repository: string): string {
+	if (!(repository.startsWith('/') || repository.startsWith('./'))) return '';
+	const msg = `restic repository not found at $RESTIC_REPOSITORY on this environment's Docker host. A local-path repository only works when the environment's Docker daemon runs on the same host as Dockhand (e.g. a co-located socket-proxy). For a remote host, use an S3 or REST destination.`;
+	return `test -f "$RESTIC_REPOSITORY/config" || { echo ${shellQuote(msg)} >&2; exit 1; }; `;
+}
+
+/**
+ * The helper runs as root (it must read root-owned source volumes), so it writes
+ * the repo files as root. The main Dockhand process reads the repo as its own
+ * (su-exec'd) uid, so for a LOCAL-path repo it couldn't read root-owned files
+ * ("snapshot not found"). Re-own the repo to the main process's uid:gid after the
+ * op so subsequent local reads work. Best-effort (`|| true`) and appended AFTER the
+ * exit marker, so it never changes restic's real exit code. '' for non-local repos
+ * (no bind, nothing to chown) and when ownerSpec is empty.
+ * Note: this only re-owns the repo FILES; the ownership of the BACKED-UP data lives
+ * in snapshot metadata and is untouched (restore fidelity is preserved).
+ */
+export function localRepoChown(repository: string, ownerSpec: string): string {
+	if (!ownerSpec) return '';
+	if (!(repository.startsWith('/') || repository.startsWith('./'))) return '';
+	return `; chown -R ${ownerSpec} "$RESTIC_REPOSITORY" 2>/dev/null || true`;
+}
+
+/**
  * Read the restic exit code from a helper's stdout (the EXIT_MARKER line, read
  * from the end so trailing output wins). Returns undefined if the marker is
- * absent — meaning the script did not run to completion (killed / crashed),
+ * absent - meaning the script did not run to completion (killed / crashed),
  * i.e. an unknown outcome the caller must treat as failure.
  */
 export function readExitMarker(stdout: string): number | undefined {
@@ -58,6 +72,35 @@ export function readExitMarker(stdout: string): number | undefined {
 		}
 	}
 	return undefined;
+}
+
+/**
+ * Classify a spawned restic process's `close` event into the fail-closed exit/stderr
+ * contract, independent of how stdout was captured (string or Buffer). A timeout kill
+ * gives `code === null` + a signal, which maps to `exitCode: undefined` (unknown
+ * outcome = failure for the caller), and the killing signal is appended to stderr so
+ * it is visible in diagnostics.
+ */
+export function classifyProcClose(
+	code: number | null,
+	signal: NodeJS.Signals | null,
+	stderr: string
+): { exitCode: number | undefined; stderr: string } {
+	const exitCode = code === null ? undefined : code;
+	const stderrOut = signal ? `${stderr}\n(process killed by ${signal})` : stderr;
+	return { exitCode, stderr: stderrOut };
+}
+
+/**
+ * Classify a spawn `error` (restic missing / not spawnable): a real failure surfaced
+ * as data with `exitCode: undefined` (never thrown), the error message appended to
+ * stderr so the caller sees why.
+ */
+export function classifyProcError(
+	err: Error,
+	stderr: string
+): { exitCode: undefined; stderr: string } {
+	return { exitCode: undefined, stderr: `${stderr}\n${err.message}` };
 }
 
 /**
@@ -81,8 +124,8 @@ export function buildHelperEnv(
 }
 
 /**
- * Build the bind list for a restic helper: the caller's volume binds, plus — for
- * a local (filesystem) repository only — the repo path bind so restic can reach
+ * Build the bind list for a restic helper: the caller's volume binds, plus - for
+ * a local (filesystem) repository only - the repo path bind so restic can reach
  * it. `resolveLocalRepoHostPath` maps the in-container repo path to a host path.
  */
 export function buildHelperBinds(

@@ -4,15 +4,12 @@ import { authorize } from '$lib/server/authorize';
 import { auditBackup } from '$lib/server/audit';
 import {
 	updateBackupConfig,
-	deleteBackupConfig,
-	getBackupDestination,
-	getEnvironment
+	deleteBackupConfig
 } from '$lib/server/db';
 import { registerSchedule, unregisterSchedule, isValidCron } from '$lib/server/scheduler';
 import { isBackupRunning } from '$lib/server/backups';
 import { validateRetention, retentionToStore, resolveEnabledOnScheduleChange } from '$lib/server/backups/helpers';
 import { requireBackups, loadConfigGateEnv } from '$lib/server/backups/route-guards';
-import { isLocalRepo, isRemoteEnvironment } from '$lib/shared/repo-predicates';
 
 export const GET: RequestHandler = async ({ params, cookies }) => {
 	const auth = await authorize(cookies);
@@ -59,21 +56,8 @@ export const PUT: RequestHandler = async (event) => {
 		return json({ error: 'Cannot change the destination while a backup is running for this config' }, { status: 409 });
 	}
 
-	// Refuse local repo + remote env (same rule as POST). Effective destination
-	// is the body's value if supplied, otherwise the existing config's.
-	const effectiveDestId = body.destinationId ?? existing.destinationId;
-	const effectiveEnvId = existing.environmentId; // env is fixed at creation
-	if (effectiveEnvId) {
-		const [dest, env] = await Promise.all([
-			getBackupDestination(effectiveDestId),
-			getEnvironment(effectiveEnvId)
-		]);
-		if (dest && env && isRemoteEnvironment(env) && isLocalRepo(dest.repository)) {
-			return json({
-				error: `Local repository "${dest.name}" cannot back up containers on remote environment "${env.name}". Use S3, REST, or another non-local backend.`
-			}, { status: 400 });
-		}
-	}
+	// A local-path repo is allowed on any env; a wrong-host mount fails loud via
+	// the helper's localRepoGuard at run time.
 
 	// Auto-enable a config that transitions from manual (no schedule) to scheduled
 	// (a real cron) — otherwise a paused run-once config that the user edits to add a

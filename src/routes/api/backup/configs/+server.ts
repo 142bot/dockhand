@@ -4,25 +4,11 @@ import { authorize } from '$lib/server/authorize';
 import { auditBackup } from '$lib/server/audit';
 import {
 	getBackupConfigs,
-	createBackupConfig,
-	getBackupDestination,
-	getEnvironment
+	createBackupConfig
 } from '$lib/server/db';
 import { registerSchedule, isValidCron } from '$lib/server/scheduler';
 import { assertStackBackupable } from '$lib/server/backups';
 import { validateRetention, retentionToStore } from '$lib/server/backups/helpers';
-
-// Inlined to avoid pulling lucide-svelte / svelte runtime into the server bundle
-// via $lib/utils/backup. Keep in sync with that module if the predicates change.
-function isLocalRepo(repository: string): boolean {
-	return repository.startsWith('/') || repository.startsWith('./');
-}
-function isRemoteEnv(connectionType?: string | null, host?: string | null): boolean {
-	if (!connectionType) return false;
-	if (connectionType === 'hawser-standard' || connectionType === 'hawser-edge') return true;
-	if (connectionType === 'direct' && !!host) return true;
-	return false;
-}
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
 	const auth = await authorize(cookies);
@@ -92,20 +78,8 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Access denied to this environment' }, { status: 403 });
 	}
 
-	// Refuse local repo + remote env: the restic helper runs on the REMOTE
-	// daemon, which has no access to Dockhand's filesystem. The backup would
-	// silently write to a wrong path on the remote host.
-	if (body.environmentId) {
-		const [dest, env] = await Promise.all([
-			getBackupDestination(body.destinationId),
-			getEnvironment(body.environmentId)
-		]);
-		if (dest && env && isRemoteEnv(env.connectionType, env.host) && isLocalRepo(dest.repository)) {
-			return json({
-				error: `Local repository "${dest.name}" cannot back up containers on remote environment "${env.name}". Use S3, REST, or another non-local backend.`
-			}, { status: 400 });
-		}
-	}
+	// A local-path repo is allowed on any env; if the target daemon can't see the
+	// repo (wrong-host mount) the backup fails loud via the helper's localRepoGuard.
 
 	// External stacks (no known compose path) can't be backed up usefully —
 	// see assertStackBackupable for the why.

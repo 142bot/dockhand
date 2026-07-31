@@ -14,9 +14,23 @@ export function isLocalRepo(repository: string): boolean {
 }
 
 /** An environment reachable over the network (hawser or direct-with-host). */
-export function isRemoteEnvironment(env?: { connectionType?: string | null; host?: string | null }): boolean {
+export function isRemoteEnvironment(env?: { connectionType?: string | null; host?: string | null } | null): boolean {
 	if (!env) return false;
 	if (env.connectionType === 'hawser-standard' || env.connectionType === 'hawser-edge') return true;
 	if (env.connectionType === 'direct' && !!env.host) return true;
 	return false;
+}
+
+/**
+ * Advisory (NOT a block): a local-path repo on a remote/direct env only works
+ * when that env's Docker daemon shares Dockhand's host (e.g. a co-located
+ * socket-proxy). The backup/restore helper runs on the target daemon and fails
+ * loud if the repo isn't visible there (see restic-script.ts localRepoGuard), so
+ * this is only a UI hint — the operation itself is allowed and self-checks.
+ */
+export function localRepoNeedsSameHost(
+	dest: { repository: string },
+	env?: { connectionType?: string | null; host?: string | null } | null
+): boolean {
+	return isLocalRepo(dest.repository) && isRemoteEnvironment(env);
 }

@@ -63,7 +63,7 @@ export function getRepoTypeLabel(repository: string): string {
 
 // Repository/environment predicates live in the lucide-free shared module so
 // server routes can import them without pulling in this file's icon deps (#37).
-export { isLocalRepo, isRemoteEnvironment } from '$lib/shared/repo-predicates';
+export { isLocalRepo, isRemoteEnvironment, localRepoNeedsSameHost } from '$lib/shared/repo-predicates';
 export {
 	normalizeMounts,
 	normalizeStackMounts,

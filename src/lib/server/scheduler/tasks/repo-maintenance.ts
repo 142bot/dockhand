@@ -39,7 +39,7 @@ async function runMaintenanceTask(
 		const policies = parsePoliciesJson(dest.policies); // (audit #26/#37) safe-degrade + log on malformed
 		if (policies.autoUnlock) {
 			log('Auto-unlocking repository...');
-			await runRepoTask(destinationId, 'unlock');
+			await runRepoTask(destinationId, 'unlock', { staleOnly: true }); // plain unlock: never wipe a live foreign lock on a shared repo
 		}
 
 		log(`Running ${task}...`);
@@ -122,7 +122,7 @@ export async function runRepoVerify(
 		const policies = parsePoliciesJson(dest.policies); // (audit #26/#37) safe-degrade + log on malformed
 		if (policies.autoUnlock) {
 			log('Auto-unlocking repository...');
-			await runRepoTask(destinationId, 'unlock');
+			await runRepoTask(destinationId, 'unlock', { staleOnly: true }); // plain unlock: never wipe a live foreign lock on a shared repo
 		}
 
 		log(`Verifying ${dataSubset} of data...`);

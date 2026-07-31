@@ -37,7 +37,7 @@ import {
 } from './security';
 import { TIMEOUTS, type ResticRun, type TimeoutTier } from './models';
 import { withTimeout } from './helpers';
-import { resticCommand, finishScript, readExitMarker, buildHelperEnv, buildHelperBinds } from './restic-script';
+import { resticCommand, finishScript, readExitMarker, buildHelperEnv, buildHelperBinds, localRepoGuard, localRepoChown, classifyProcClose, classifyProcError } from './restic-script';
 import { translateContainerPathViaMount } from '../host-path';
 
 /** The label key stamped on every helper container so a reaper only removes
@@ -119,15 +119,13 @@ export class Restic {
 			proc.stdout.on('data', (d) => { stdout += d; });
 			proc.stderr.on('data', (d) => { stderr += d; });
 			proc.on('close', (code, signal) => {
-				// A timeout kill gives code === null + a signal → exit is undefined
-				// (unknown outcome), which the caller treats as failure.
-				const exitCode = code === null ? undefined : code;
-				const stderrOut = signal ? `${stderr}\n(process killed by ${signal})` : stderr;
+				const { exitCode, stderr: stderrOut } = classifyProcClose(code, signal, stderr);
 				done({ exitCode, stdout, stderr: stderrOut });
 			});
 			proc.on('error', (err) => {
 				// restic missing / not spawnable — a real failure, surfaced as data.
-				done({ exitCode: undefined, stdout, stderr: `${stderr}\n${err.message}` });
+				const { exitCode, stderr: stderrOut } = classifyProcError(err, stderr);
+				done({ exitCode, stdout, stderr: stderrOut });
 			});
 		});
 	}
@@ -163,12 +161,12 @@ export class Restic {
 			proc.stdout.on('data', (d: Buffer) => { chunks.push(Buffer.from(d)); });
 			proc.stderr.on('data', (d) => { stderr += d; });
 			proc.on('close', (code, signal) => {
-				const exitCode = code === null ? undefined : code;
-				const stderrOut = signal ? `${stderr}\n(process killed by ${signal})` : stderr;
+				const { exitCode, stderr: stderrOut } = classifyProcClose(code, signal, stderr);
 				done({ exitCode, stdout: Buffer.concat(chunks), stderr: stderrOut });
 			});
 			proc.on('error', (err) => {
-				done({ exitCode: undefined, stdout: Buffer.concat(chunks), stderr: `${stderr}\n${err.message}` });
+				const { exitCode, stderr: stderrOut } = classifyProcError(err, stderr);
+				done({ exitCode, stdout: Buffer.concat(chunks), stderr: stderrOut });
 			});
 		});
 	}
@@ -194,9 +192,18 @@ export class Restic {
 		// code. A caller-supplied script (e.g. the in-place restore swap) may use
 		// `set -e`, so capture its exit in a subshell — the marker line must still
 		// print on success, otherwise a clean run reads back as undefined (failure).
+		// The local-repo guard runs FIRST (inside the marked command, so its exit 1
+		// surfaces via the marker): a local repo whose `config` isn't visible on the
+		// target daemon's host is a wrong-host mount — fail loud, not silently empty.
+		const guard = localRepoGuard(destination.repository);
+		// The helper runs as root; re-own a local repo to the main process's uid:gid
+		// after the op so the main process (su-exec'd to that uid) can read it back.
+		// Appended AFTER the exit marker so it never changes restic's exit code.
+		const ownerSpec = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
+		const chown = localRepoChown(destination.repository, ownerSpec);
 		const cmd = spec.script
-			? ['sh', '-c', finishScript(`( ${spec.script} )`)]
-			: ['sh', '-c', finishScript(resticCommand([...spec.args, ...sanitizeResticFlags(destination.flags)]))];
+			? ['sh', '-c', finishScript(`( ${guard}${spec.script} )`) + chown]
+			: ['sh', '-c', finishScript(`${guard}${resticCommand([...spec.args, ...sanitizeResticFlags(destination.flags)])}`) + chown];
 
 		// Large metadata/stack files go into the container via put-archive (docker
 		// cp), NOT the Cmd, so they can't blow ARG_MAX. Build the tar once; stream

@@ -5,7 +5,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import CronEditor from '$lib/components/cron-editor.svelte';
 	import { Box, Layers, Loader2, Plus, ChevronDown, ChevronRight, ArrowRight, Zap, GitBranch } from 'lucide-svelte';
-	import { formatCron, getRepoTypeIcon, isLocalRepo, isRemoteEnvironment } from '$lib/utils/backup';
+	import { formatCron, getRepoTypeIcon } from '$lib/utils/backup';
 	import { standaloneContainers, volumesForStack, type BackupItem } from '$lib/utils/mounts';
 	import BackupPanel from '../../containers/BackupPanel.svelte';
 
@@ -36,8 +36,9 @@
 	let batchDestId = $state<number>(0);
 	let batchSchedule = $state('0 2 * * *');
 	let batchSaving = $state(false);
-	const isRemote = $derived(isRemoteEnvironment({ connectionType, host }));
-	const usableDestinations = $derived(isRemote ? destList.filter(d => !isLocalRepo(d.repository)) : destList);
+	// All destinations are selectable; a local repo on a non-co-located env fails
+	// loud at run time (helper localRepoGuard), not hidden here.
+	const usableDestinations = $derived(destList);
 	// External stacks can't be backed up — exclude them from the unconfigured count
 	// and from "Schedule all" so the number reflects only backup-able targets. The
 	// list mixes stacks and standalone containers, and "Schedule all" configs BOTH,
