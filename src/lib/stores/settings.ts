@@ -17,6 +17,7 @@ export interface AppSettings {
 	confirmDestructive: boolean;
 	showStoppedContainers: boolean;
 	highlightUpdates: boolean;
+	showGitCommitHash: boolean;
 	timeFormat: TimeFormat;
 	dateFormat: DateFormat;
 	downloadFormat: DownloadFormat;
@@ -59,6 +60,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 	confirmDestructive: true,
 	showStoppedContainers: true,
 	highlightUpdates: true,
+	showGitCommitHash: false,
 	timeFormat: '24h',
 	dateFormat: 'DD.MM.YYYY',
 	downloadFormat: 'tar',
@@ -147,6 +149,7 @@ function createSettingsStore() {
 					confirmDestructive: settings.confirmDestructive ?? DEFAULT_SETTINGS.confirmDestructive,
 					showStoppedContainers: settings.showStoppedContainers ?? DEFAULT_SETTINGS.showStoppedContainers,
 					highlightUpdates: settings.highlightUpdates ?? DEFAULT_SETTINGS.highlightUpdates,
+					showGitCommitHash: settings.showGitCommitHash ?? DEFAULT_SETTINGS.showGitCommitHash,
 					timeFormat: settings.timeFormat ?? DEFAULT_SETTINGS.timeFormat,
 					dateFormat: settings.dateFormat ?? DEFAULT_SETTINGS.dateFormat,
 					downloadFormat: settings.downloadFormat ?? DEFAULT_SETTINGS.downloadFormat,
@@ -205,6 +208,7 @@ function createSettingsStore() {
 					confirmDestructive: updatedSettings.confirmDestructive ?? DEFAULT_SETTINGS.confirmDestructive,
 					showStoppedContainers: updatedSettings.showStoppedContainers ?? DEFAULT_SETTINGS.showStoppedContainers,
 					highlightUpdates: updatedSettings.highlightUpdates ?? DEFAULT_SETTINGS.highlightUpdates,
+					showGitCommitHash: updatedSettings.showGitCommitHash ?? DEFAULT_SETTINGS.showGitCommitHash,
 					timeFormat: updatedSettings.timeFormat ?? DEFAULT_SETTINGS.timeFormat,
 					dateFormat: updatedSettings.dateFormat ?? DEFAULT_SETTINGS.dateFormat,
 					downloadFormat: updatedSettings.downloadFormat ?? DEFAULT_SETTINGS.downloadFormat,
@@ -284,6 +288,13 @@ function createSettingsStore() {
 			update((current) => {
 				const newSettings = { ...current, highlightUpdates: value };
 				saveSettings({ highlightUpdates: value });
+				return newSettings;
+			});
+		},
+		setShowGitCommitHash: (value: boolean) => {
+			update((current) => {
+				const newSettings = { ...current, showGitCommitHash: value };
+				saveSettings({ showGitCommitHash: value });
 				return newSettings;
 			});
 		},
@@ -627,6 +638,15 @@ export function formatDate(date: Date | string | number): string {
 }
 
 /**
+ * Compact relative time like "just now", "5m ago", "2d ago", "3mo ago".
+ * For display ONLY, alongside the absolute date - sort still uses the raw
+ * timestamp, never this string.
+ */
+// Re-exported from the import-light utils/format module (so it stays unit-testable
+// without pulling $app/environment). Kept exported here for existing callers.
+export { formatRelativeTime } from '$lib/utils/format';
+
+/**
  * Get the current time format setting (for components that need it).
  */
 export function getTimeFormat(): TimeFormat {
@@ -638,6 +658,14 @@ export function getTimeFormat(): TimeFormat {
  */
 export function getDateFormat(): DateFormat {
 	return cachedDateFormat;
+}
+
+/**
+ * Get the global default timezone setting (for components that format a time and have
+ * no more-specific timezone to use). Falls back to UTC via DEFAULT_SETTINGS.
+ */
+export function getDefaultTimezone(): string {
+	return cachedDefaultTimezone;
 }
 
 // Regex matching ISO 8601 timestamps at the start of log lines (after optional container prefix)

@@ -7,7 +7,7 @@
 	import CodeEditor, { type VariableMarker } from '$lib/components/CodeEditor.svelte';
 	import StackEnvVarsPanel from '$lib/components/StackEnvVarsPanel.svelte';
 	import { type EnvVar, type ValidationResult } from '$lib/components/StackEnvVarsEditor.svelte';
-	import { Layers, Save, Play, Code, GitGraph, GitBranch, Loader2, AlertCircle, X, Sun, Moon, TriangleAlert, GripVertical, FolderOpen, Copy, Check, XCircle, MapPin, ArrowRight, ArrowDown, Info, Box, FolderSync, Archive } from 'lucide-svelte';
+	import { Layers, Save, Play, Code, GitGraph, GitBranch, GitCommitHorizontal, Github, Loader2, AlertCircle, X, Sun, Moon, TriangleAlert, GripVertical, FolderOpen, Copy, Check, XCircle, MapPin, ArrowRight, ArrowDown, Info, Box, FolderSync, Archive } from 'lucide-svelte';
 	import BackupPanel from '../containers/BackupPanel.svelte';
 	import { volumesForStack, type VolumeInfo } from '$lib/utils/mounts';
 	import { fetchBackupExecutions } from '$lib/utils/backup';
@@ -27,10 +27,7 @@
 	import { readJobResponse } from '$lib/utils/sse-fetch';
 	import { toast } from 'svelte-sonner';
 	import ComposeGraphViewer from './ComposeGraphViewer.svelte';
-	import { useSidebar } from '$lib/components/ui/sidebar/context.svelte';
 
-	// Get sidebar state to adjust modal positioning
-	const sidebar = useSidebar();
 
 	// localStorage key for persisted split ratio
 	const STORAGE_KEY_SPLIT = 'dockhand-stack-modal-split';
@@ -42,11 +39,15 @@
 		initialCompose?: string; // Pre-fill compose content (for library deploy)
 		initialStackName?: string; // Pre-fill stack name (for library deploy)
 		readonly?: boolean; // View compose content without allowing local changes
+		gitInfo?: { commit?: string; url?: string; branch?: string } | null; // Git provenance for read-only git stacks
 		onClose: () => void;
 		onSuccess: () => void; // Called after create or save
 	}
 
-	let { open = $bindable(), mode: propMode, stackName: propStackName = '', initialCompose, initialStackName, readonly = false, onClose, onSuccess }: Props = $props();
+	let { open = $bindable(), mode: propMode, stackName: propStackName = '', initialCompose, initialStackName, readonly = false, gitInfo = null, onClose, onSuccess }: Props = $props();
+
+	let gitCommitCopied = $state<'ok' | 'error' | null>(null);
+	let gitUrlCopied = $state<'ok' | 'error' | null>(null);
 
 	// Local effective state - can transition from create → edit after failed deploy
 	let mode = $state(propMode);
@@ -1388,7 +1389,7 @@
 	}}
 >
 	<Dialog.Content
-		class="max-w-none h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700 {sidebar.state === 'collapsed' ? 'w-[calc(100vw-6rem)] ml-[1.5rem]' : 'w-[calc(100vw-12rem)] ml-[4.5rem]'}"
+		class="max-w-none w-[calc(100vw-4rem)] h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700"
 		showCloseButton={false}
 	>
 		<Dialog.Header class="px-5 py-3 border-b border-zinc-200 dark:border-zinc-700 flex-shrink-0">
@@ -1540,6 +1541,34 @@
 								<span class="ml-4 flex shrink-0 items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-2xs font-medium text-purple-600 dark:text-purple-400" title="This is a Git-managed stack — Dockhand shows its compose read-only; edit it in the repository.">
 									<GitBranch class="h-3 w-3" /> Git · read-only
 								</span>
+								{#if gitInfo && (gitInfo.commit || gitInfo.url || gitInfo.branch)}
+									<div class="ml-3 flex min-w-0 items-center gap-3 text-2xs text-muted-foreground">
+										{#if gitInfo.commit}
+											<span class="flex shrink-0 items-center gap-1">
+												<GitCommitHorizontal class="h-3.5 w-3.5 shrink-0 opacity-70" />
+												<code class="font-mono">{gitInfo.commit}</code>
+												<button type="button" class="rounded p-0.5 hover:bg-muted transition-colors" title="Copy commit hash" onclick={() => copyText(gitInfo.commit ?? null, (v) => gitCommitCopied = v)}>
+													{#if gitCommitCopied === 'ok'}<Check class="h-3 w-3 text-green-500" />{:else}<Copy class="h-3 w-3" />{/if}
+												</button>
+											</span>
+										{/if}
+										{#if gitInfo.url}
+											<span class="flex min-w-0 items-center gap-1">
+												<Github class="h-3.5 w-3.5 shrink-0 opacity-70" />
+												<span class="truncate">{gitInfo.url}</span>
+												<button type="button" class="rounded p-0.5 hover:bg-muted transition-colors shrink-0" title="Copy repository URL" onclick={() => copyText(gitInfo.url ?? null, (v) => gitUrlCopied = v)}>
+													{#if gitUrlCopied === 'ok'}<Check class="h-3 w-3 text-green-500" />{:else}<Copy class="h-3 w-3" />{/if}
+												</button>
+											</span>
+										{/if}
+										{#if gitInfo.branch}
+											<span class="flex shrink-0 items-center gap-1">
+												<GitBranch class="h-3.5 w-3.5 shrink-0 opacity-70" />
+												<span>{gitInfo.branch}</span>
+											</span>
+										{/if}
+									</div>
+								{/if}
 							{/if}
 							<!-- Compose path -->
 							<div class="flex-shrink-0 px-4 py-2" style="width: {splitRatio}%">

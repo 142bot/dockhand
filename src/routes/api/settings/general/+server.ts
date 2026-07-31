@@ -88,6 +88,8 @@ export interface GeneralSettings {
 	compactPorts: boolean;
 	// Show exposed (internal) ports
 	showExposedPorts: boolean;
+	// Show the deployed git commit hash in the stack source badge
+	showGitCommitHash: boolean;
 	// Log timestamp formatting
 	formatLogTimestamps: boolean;
 	// External stack paths
@@ -141,6 +143,7 @@ const DEFAULT_SETTINGS: Omit<GeneralSettings, 'scheduleRetentionDays' | 'eventRe
 	metricsCollectionInterval: 30000,
 	compactPorts: false,
 	showExposedPorts: false,
+	showGitCommitHash: false,
 	formatLogTimestamps: false,
 	lightTheme: 'default',
 	darkTheme: 'default',
@@ -253,6 +256,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			editorFont,
 			compactPorts,
 			showExposedPorts,
+			showGitCommitHash,
 			formatLogTimestamps,
 			externalStackPaths,
 			primaryStackLocation,
@@ -302,6 +306,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			getSetting('theme_editor_font'),
 			getSetting('compact_ports'),
 			getSetting('show_exposed_ports'),
+			getSetting('show_git_commit_hash'),
 			getSetting('format_log_timestamps'),
 			getExternalStackPaths(),
 			getPrimaryStackLocation(),
@@ -354,6 +359,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			terminalFont: terminalFont ?? DEFAULT_SETTINGS.terminalFont,
 			editorFont: editorFont ?? DEFAULT_SETTINGS.editorFont,
 			compactPorts: compactPorts ?? DEFAULT_SETTINGS.compactPorts,
+			showGitCommitHash: showGitCommitHash ?? DEFAULT_SETTINGS.showGitCommitHash,
 			showExposedPorts: showExposedPorts ?? DEFAULT_SETTINGS.showExposedPorts,
 			formatLogTimestamps: formatLogTimestamps ?? DEFAULT_SETTINGS.formatLogTimestamps,
 			externalStackPaths,
@@ -387,7 +393,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const body = await request.json();
-		const { confirmDestructive, showStoppedContainers, highlightUpdates, coloredActionButtons, actionIconSize, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, defaultBackupImage, honorProxyLabels, showImageChangelogLinks, animateIcons, protectScannerImages, showWhatsNew, defaultScannerNetworkMode, defaultScannerDns } = body;
+		const { confirmDestructive, showStoppedContainers, highlightUpdates, coloredActionButtons, actionIconSize, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, showGitCommitHash, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, defaultBackupImage, honorProxyLabels, showImageChangelogLinks, animateIcons, protectScannerImages, showWhatsNew, defaultScannerNetworkMode, defaultScannerDns } = body;
 
 		if (confirmDestructive !== undefined) {
 			await setSetting('confirm_destructive', confirmDestructive);
@@ -498,6 +504,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (editorFont !== undefined && VALID_EDITOR_FONTS.includes(editorFont)) {
 			await setSetting('theme_editor_font', editorFont);
 		}
+		if (showGitCommitHash !== undefined) {
+			await setSetting('show_git_commit_hash', showGitCommitHash);
+		}
 		if (compactPorts !== undefined) {
 			await setSetting('compact_ports', compactPorts);
 		}
@@ -601,6 +610,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			editorFontVal,
 			compactPortsVal,
 			showExposedPortsVal,
+			showGitCommitHashVal,
 			formatLogTimestampsVal,
 			externalStackPathsVal,
 			primaryStackLocationVal,
@@ -650,6 +660,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			getSetting('theme_editor_font'),
 			getSetting('compact_ports'),
 			getSetting('show_exposed_ports'),
+			getSetting('show_git_commit_hash'),
 			getSetting('format_log_timestamps'),
 			getExternalStackPaths(),
 			getPrimaryStackLocation(),
@@ -703,6 +714,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			editorFont: editorFontVal ?? DEFAULT_SETTINGS.editorFont,
 			compactPorts: compactPortsVal ?? DEFAULT_SETTINGS.compactPorts,
 			showExposedPorts: showExposedPortsVal ?? DEFAULT_SETTINGS.showExposedPorts,
+			showGitCommitHash: showGitCommitHashVal ?? DEFAULT_SETTINGS.showGitCommitHash,
 			formatLogTimestamps: formatLogTimestampsVal ?? DEFAULT_SETTINGS.formatLogTimestamps,
 			externalStackPaths: externalStackPathsVal,
 			primaryStackLocation: primaryStackLocationVal,

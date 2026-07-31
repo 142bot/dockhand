@@ -25,6 +25,7 @@
 	import BatchOperationModal from '$lib/components/BatchOperationModal.svelte';
 	import type { ComposeStackInfo, ContainerStats } from '$lib/types';
 	import StackModal from './StackModal.svelte';
+	import GitSourceBadge from './GitSourceBadge.svelte';
 	import GitStackModal from './GitStackModal.svelte';
 	import ImportStackModal from './ImportStackModal.svelte';
 	import GitDeployProgressPopover from './GitDeployProgressPopover.svelte';
@@ -70,6 +71,7 @@
 	let showImportModal = $state(false);
 	let editingStackName = $state('');
 	let stackModalReadonly = $state(false);
+	let stackModalGitInfo = $state<{ commit?: string; url?: string; branch?: string } | null>(null);
 	let editingGitStack = $state<any>(null);
 	let envId = $state<number | null>(null);
 
@@ -492,7 +494,15 @@
 	let confirmRemoveContainerId = $state<string | null>(null);
 
 	// Operation error state (for stack and container operations)
-	let operationError = $state<{ id: string; title: string; message: string } | null>(null);
+	let operationError = $state<{ id: string; message: string } | null>(null);
+
+	// Inline operation-error auto-dismiss timers, cleared on destroy.
+	let pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
+	function clearErrorAfterDelay(id: string) {
+		pendingTimeouts.push(setTimeout(() => {
+			if (operationError?.id === id) operationError = null;
+		}, 5000));
+	}
 
 	// Error dialog state (for showing detailed errors)
 	let errorDialogData = $state<{ title: string; message: string } | null>(null);
@@ -1084,6 +1094,12 @@
 	function viewGitStack(name: string) {
 		editingStackName = name;
 		stackModalReadonly = true;
+		const src = getStackSource(name);
+		stackModalGitInfo = {
+			commit: src?.gitStack?.lastCommit || undefined,
+			url: src?.repository?.url || undefined,
+			branch: src?.repository?.branch || undefined
+		};
 		showEditModal = true;
 	}
 
@@ -1369,6 +1385,10 @@
 
 	// Cleanup on component destroy
 	onDestroy(() => {
+		// Clear pending inline-error dismiss timers
+		pendingTimeouts.forEach(clearTimeout);
+		pendingTimeouts = [];
+
 		// Clear polling intervals
 		if (stacksInterval) {
 			clearInterval(stacksInterval);
@@ -1684,7 +1704,7 @@
 									{stackEnvVarCounts[stack.name]}
 								</span>
 							</Tooltip.Trigger>
-							<Tooltip.Content class="whitespace-nowrap">
+							<Tooltip.Content>
 								{stackEnvVarCounts[stack.name]} environment variable{stackEnvVarCounts[stack.name] !== 1 ? 's' : ''} configured
 							</Tooltip.Content>
 						</Tooltip.Root>
@@ -1737,7 +1757,7 @@
 										<span class="text-2xs font-medium text-amber-500 leading-none">{stack.updateCount}</span>
 									{/if}
 								</Tooltip.Trigger>
-								<Tooltip.Content class="whitespace-nowrap">
+								<Tooltip.Content>
 									External stack - update possible for individual containers only.
 								</Tooltip.Content>
 							</Tooltip.Root>
@@ -1746,42 +1766,19 @@
 					</span>
 				{:else if column.id === 'source'}
 					{#if source.sourceType === 'git'}
-						{#if source.gitStack?.lastCommit}
-							<Tooltip.Root>
-								<Tooltip.Trigger>
-									<span
-										class="inline-flex items-center justify-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 shadow-sm min-w-[5.5rem]"
-									>
-										<GitBranch class="w-3 h-3" />
-										<span>Git</span>
-										<span class="font-mono text-[10px] opacity-75">{source.gitStack.lastCommit}</span>
-									</span>
-								</Tooltip.Trigger>
-								<Tooltip.Content class="whitespace-nowrap">
-									<code class="text-xs">{source.gitStack.lastCommit}</code>
-									{#if source.repository}
-										<br />
-										<span class="text-xs">{source.repository.url} ({source.repository.branch})</span>
-									{/if}
-								</Tooltip.Content>
-							</Tooltip.Root>
-						{:else}
-							<span
-								class="inline-flex items-center justify-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 shadow-sm min-w-[5.5rem]"
-								title={source.repository ? `${source.repository.url} (${source.repository.branch})` : 'Deployed from Git repository'}
-							>
-								<GitBranch class="w-3 h-3" />
-								Git
-							</span>
-						{/if}
+						<GitSourceBadge {source} />
 					{:else if source.sourceType === 'internal'}
-						<span
-							class="inline-flex items-center justify-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 shadow-sm min-w-[5.5rem]"
-							title="Managed by Dockhand"
-						>
-							<FileCode class="w-3 h-3" />
-							Internal
-						</span>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								<span
+									class="inline-flex items-center justify-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 shadow-sm min-w-[5.5rem]"
+								>
+									<FileCode class="w-3 h-3" />
+									Internal
+								</span>
+							</Tooltip.Trigger>
+							<Tooltip.Content>Managed by Dockhand</Tooltip.Content>
+						</Tooltip.Root>
 					{:else}
 						<Tooltip.Root>
 							<Tooltip.Trigger>
@@ -1792,7 +1789,7 @@
 									Untracked
 								</span>
 							</Tooltip.Trigger>
-							<Tooltip.Content class="whitespace-nowrap">
+							<Tooltip.Content>
 								Compose file location unknown. Click the stack name or edit button to locate it.
 							</Tooltip.Content>
 						</Tooltip.Root>
@@ -1816,40 +1813,70 @@
 				{:else if column.id === 'containers'}
 					<div class="flex items-center gap-1">
 						{#if getContainerStateCounts(stack).running}
-							<span class="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400" title="Running">
-								<Play class="w-3.5 h-3.5" />
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).running}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
+										<Play class="w-3.5 h-3.5" />
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).running}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Running</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if getContainerStateCounts(stack).exited}
-							<span class="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400" title="Exited">
-								<Square class="w-3.5 h-3.5" />
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).exited}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400">
+										<Square class="w-3.5 h-3.5" />
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).exited}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Exited</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if getContainerStateCounts(stack).paused}
-							<span class="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400" title="Paused">
-								<Pause class="w-3.5 h-3.5" />
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).paused}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400">
+										<Pause class="w-3.5 h-3.5" />
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).paused}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Paused</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if getContainerStateCounts(stack).restarting}
-							<span class="inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400" title="Restarting">
-								<span class="w-3.5 h-3.5 flex items-center justify-center"><RefreshCw class="w-3.5 h-3.5 animate-spin" /></span>
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).restarting}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400">
+										<span class="w-3.5 h-3.5 flex items-center justify-center"><RefreshCw class="w-3.5 h-3.5 animate-spin" /></span>
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).restarting}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Restarting</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if getContainerStateCounts(stack).created}
-							<span class="inline-flex items-center gap-0.5 text-slate-500 dark:text-slate-400" title="Created">
-								<CircleDashed class="w-3.5 h-3.5" />
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).created}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-slate-500 dark:text-slate-400">
+										<CircleDashed class="w-3.5 h-3.5" />
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).created}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Created</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if getContainerStateCounts(stack).dead}
-							<span class="inline-flex items-center gap-0.5 text-rose-700 dark:text-rose-400" title="Dead">
-								<Skull class="w-3.5 h-3.5" />
-								<span class="text-xs font-medium">{getContainerStateCounts(stack).dead}</span>
-							</span>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<span class="inline-flex items-center gap-0.5 text-rose-700 dark:text-rose-400">
+										<Skull class="w-3.5 h-3.5" />
+										<span class="text-xs font-medium">{getContainerStateCounts(stack).dead}</span>
+									</span>
+								</Tooltip.Trigger>
+								<Tooltip.Content>Dead</Tooltip.Content>
+							</Tooltip.Root>
 						{/if}
 						{#if stack.containers.length === 0}
 							<span class="text-xs text-muted-foreground">-</span>
@@ -2606,10 +2633,12 @@
 	mode="edit"
 	stackName={editingStackName}
 	readonly={stackModalReadonly}
+	gitInfo={stackModalGitInfo}
 	onClose={() => {
 		showEditModal = false;
 		editingStackName = '';
 		stackModalReadonly = false;
+		stackModalGitInfo = null;
 	}}
 	onSuccess={fetchStacks}
 />

@@ -4,7 +4,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Plus, Trash2, Pencil, GitBranch, FolderGit2, Plug, CheckCircle, XCircle, Loader2, Github, Lock, Globe } from 'lucide-svelte';
+	import { Plus, Trash2, Pencil, GitBranch, FolderGit2, Plug, CheckCircle, XCircle, Loader2, Lock, Globe } from 'lucide-svelte';
+	import { forgeIcon } from '$lib/utils/git-forge';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import { canAccess } from '$lib/stores/auth';
 	import GitRepositoryModal from './GitRepositoryModal.svelte';
@@ -160,13 +161,10 @@
 	{:else}
 		<div class="space-y-1">
 			{#each repositories as repo (repo.id)}
+				{@const ForgeIcon = forgeIcon(repo.url)}
 				<div class="flex items-center justify-between py-2 px-3 rounded-md border bg-card hover:bg-muted/50 transition-colors">
 					<div class="flex items-center gap-2 min-w-0 flex-1">
-						{#if repo.url.includes('github.com')}
-							<Github class="w-4 h-4 shrink-0 text-muted-foreground" />
-						{:else}
-							<FolderGit2 class="w-4 h-4 shrink-0 text-muted-foreground" />
-						{/if}
+						<ForgeIcon class="w-4 h-4 shrink-0 text-muted-foreground" />
 						<span class="font-medium text-sm truncate">{repo.name}</span>
 						<span class="text-xs text-muted-foreground truncate hidden sm:inline">{repo.url}</span>
 					</div>
