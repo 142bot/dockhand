@@ -13,6 +13,8 @@
  * quietly omits data is exactly the failure mode we refuse.
  */
 
+import { isUnbackupableBindSource } from '../../utils/unbackupable-mounts';
+
 /** A single mount as returned by a container inspect (the fields we use). */
 export interface Mount {
 	Type: string;
@@ -102,6 +104,14 @@ export function discoverVolumesFromMounts(containers: Array<{ name: string; moun
 					source: mount.Name,
 				});
 			} else if (mount.Type === 'bind' && mount.Source && mount.Destination) {
+				if (isUnbackupableBindSource(mount.Source)) {
+					skipped.push({
+						type: 'bind',
+						destination: mount.Destination,
+						reason: `${mount.Source} is a socket or host system path, not backed up`,
+					});
+					continue;
+				}
 				const pairKey = `${mount.Source}\n${mount.Destination}`;
 				if (seenBindPairs.has(pairKey)) continue;
 				seenBindPairs.add(pairKey);

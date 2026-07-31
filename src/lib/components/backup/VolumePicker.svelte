@@ -20,6 +20,8 @@
 		mountPoint: string;
 		mountType?: 'volume' | 'bind';
 		source?: string;
+		/** Socket / host system bind the engine won't capture: listed but not selectable. */
+		unbackupable?: boolean;
 	}
 
 	interface Props {
@@ -40,7 +42,10 @@
 		showBindWarning = true
 	}: Props = $props();
 
-	const bindMounts = $derived(volumes.filter((v) => v.mountType === 'bind'));
+	// Unbackupable binds (docker.sock, host system paths) are listed for context but
+	// never count as backup targets and can't be selected. The engine skips them too.
+	const backupable = $derived(volumes.filter((v) => !v.unbackupable));
+	const bindMounts = $derived(backupable.filter((v) => v.mountType === 'bind'));
 
 	function toggleVolume(name: string) {
 		if (selectedVolumes.includes(name)) {
@@ -56,7 +61,7 @@
 	     so the switch clearly belongs to the volumes below it. -->
 	<div class="border rounded-md overflow-hidden">
 		<div class="flex items-center justify-between gap-4 px-3 py-2 bg-muted/30 border-b">
-			<Label class="text-xs">Backup all volumes ({volumes.length})</Label>
+			<Label class="text-xs">Backup all volumes ({backupable.length})</Label>
 			<TogglePill bind:checked={allVolumes} onLabel="Yes" offLabel="No" />
 		</div>
 
@@ -73,11 +78,11 @@
 		<!-- List always shown: informational when "all" is on, selectable when off. -->
 		<div class="divide-y max-h-40 overflow-y-auto">
 			{#each volumes as vol}
-				<label class="flex items-center gap-2 px-3 py-1.5 text-xs" class:cursor-pointer={!allVolumes}>
+				<label class="flex items-center gap-2 px-3 py-1.5 text-xs" class:cursor-pointer={!allVolumes && !vol.unbackupable} class:opacity-50={vol.unbackupable}>
 					<Checkbox
-						checked={allVolumes || selectedVolumes.includes(vol.name)}
-						disabled={allVolumes}
-						onCheckedChange={() => toggleVolume(vol.name)}
+						checked={!vol.unbackupable && (allVolumes || selectedVolumes.includes(vol.name))}
+						disabled={allVolumes || vol.unbackupable}
+						onCheckedChange={() => !vol.unbackupable && toggleVolume(vol.name)}
 						class="h-3.5 w-3.5"
 					/>
 					<MountTypeBadge type={vol.mountType} size="sm" />
@@ -85,7 +90,9 @@
 						{#if vol.source && vol.source !== vol.name}
 							<span class="text-muted-foreground font-mono truncate">from {vol.source}</span>
 						{/if}
-						{#if vol.mountPoint}
+						{#if vol.unbackupable}
+							<span class="text-muted-foreground ml-auto shrink-0 italic">socket / system path - not backed up</span>
+						{:else if vol.mountPoint}
 							<span class="text-muted-foreground ml-auto truncate">{vol.mountPoint}</span>
 						{/if}
 					</label>

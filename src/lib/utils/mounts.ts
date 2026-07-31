@@ -4,6 +4,8 @@
  * unit-testable under `bun test`.
  */
 
+import { isUnbackupableBindSource } from './unbackupable-mounts';
+
 export interface VolumeInfo {
 	name: string;
 	mountPoint: string;
@@ -11,6 +13,10 @@ export interface VolumeInfo {
 	/** Bind mounts only: the host source path, for display (name is the container
 	 *  destination so it matches the backup engine's filter). */
 	source?: string;
+	/** Bind mounts only: true when the host source is a socket or host system path
+	 *  the backup engine refuses to capture. Shown in the picker but not selectable,
+	 *  and excluded from "backup all" — mirrors the engine's isUnbackupableBindSource. */
+	unbackupable?: boolean;
 }
 
 /** A raw Docker mount as returned by the containers API (list or inspect).
@@ -44,7 +50,9 @@ export function volumeInfoFromBind(bind: { hostPath: string; containerPath: stri
 	return {
 		name: mountType === 'bind' ? bind.containerPath : bind.hostPath,
 		mountPoint: bind.containerPath,
-		mountType
+		mountType,
+		source: mountType === 'bind' ? bind.hostPath : undefined,
+		unbackupable: mountType === 'bind' ? isUnbackupableBindSource(bind.hostPath) || undefined : undefined
 	};
 }
 
@@ -64,7 +72,7 @@ export function normalizeMounts(mounts: RawMount[] | null | undefined): VolumeIn
 		const destination = m.destination || m.Destination || '';
 		const source = m.source || m.Source || '';
 		if (type === 'bind') {
-			out.push({ name: destination || source, mountPoint: destination, mountType: 'bind', source: source || undefined });
+			out.push({ name: destination || source, mountPoint: destination, mountType: 'bind', source: source || undefined, unbackupable: isUnbackupableBindSource(source) || undefined });
 		} else {
 			const name = m.name || m.Name || source || destination || '';
 			out.push({ name, mountPoint: destination, mountType: 'volume' });
