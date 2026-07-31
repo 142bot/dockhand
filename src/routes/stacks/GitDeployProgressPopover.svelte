@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatErrorLines } from '$lib/utils/format';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
@@ -257,7 +258,7 @@
 				<div class="mt-3 mx-2 p-3 rounded-md bg-destructive/10 border border-destructive/20">
 					<div class="flex items-start gap-2 text-sm text-destructive">
 						<AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
-						<span class="break-all">{errorMessage}</span>
+						<span class="whitespace-pre-wrap break-words">{formatErrorLines(errorMessage)}</span>
 					</div>
 				</div>
 			{/if}

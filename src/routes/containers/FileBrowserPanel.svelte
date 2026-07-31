@@ -38,6 +38,7 @@
 		TextCursorInput
 	} from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
+	import { LoadingState } from '$lib/components/ui/loading-state';
 	import { formatDateTime, appSettings } from '$lib/stores/settings';
 
 	interface FileEntry {
@@ -762,13 +763,19 @@
 			currentPath = data.path || path;
 			// Map snapshot entries to match FileEntry interface
 			if (isSnapshotMode) {
+				// restic ls --json gives permissions as a 10-char ls string
+				// ("-rw-------": leading type char + 9 rwx). permissionsToOctal wants
+				// the 9 rwx chars, so drop the leading type char. Owner/group come as
+				// user/group names when the source had /etc/passwd, else numeric uid/gid.
 				entries = (data.entries || []).map((e: any) => ({
 					name: e.name,
 					type: e.type === 'dir' ? 'directory' : e.type,
 					size: e.size || 0,
-					permissions: '',
-					owner: '',
-					group: '',
+					permissions: typeof e.permissions === 'string' && e.permissions.length >= 10
+						? e.permissions.slice(1)
+						: '',
+					owner: e.user || (e.uid != null ? String(e.uid) : ''),
+					group: e.group || (e.gid != null ? String(e.gid) : ''),
 					modified: e.mtime || ''
 				}));
 			} else {
@@ -1002,10 +1009,7 @@
 	<!-- File list -->
 	<div class="flex-1 overflow-auto relative">
 		{#if loading}
-			<div class="absolute inset-0 bg-background/80 flex items-center justify-center z-10">
-				<Loader2 class="w-5 h-5 animate-spin mr-2 text-muted-foreground" />
-				<span class="text-sm text-muted-foreground">Loading...</span>
-			</div>
+			<LoadingState class="absolute inset-0 z-10 bg-background/80" label="Loading files..." />
 		{/if}
 		{#if error}
 			<div class="flex items-center justify-center p-4 h-full">
@@ -1023,8 +1027,12 @@
 				<span class="text-sm">{showHiddenFiles ? 'Directory is empty' : 'No visible files (hidden files are hidden)'}</span>
 			</div>
 		{:else if displayEntries().length > 0}
-			<Table.Root class="text-xs">
-				<Table.Header>
+			<!-- Bare <table>, not Table.Root: Table.Root wraps the table in an
+			     overflow-x-auto div that becomes the sticky scroll context, so the
+			     sticky <thead> would anchor to that non-scrolling wrapper instead of
+			     the flex-1 overflow-auto above and never stick. Same pattern DataGrid uses. -->
+			<table class="w-full caption-bottom text-sm text-xs">
+				<Table.Header class="sticky top-0 z-10 bg-background">
 					<Table.Row>
 						<Table.Head class="w-[35%] py-1.5 text-xs font-medium">
 							<button type="button" class="flex items-center gap-1 hover:text-foreground" onclick={() => toggleSort('name')}>
@@ -1038,8 +1046,11 @@
 								<svelte:component this={getSortIcon('size')} class="w-3 h-3 opacity-50" />
 							</button>
 						</Table.Head>
-						<Table.Head class="w-[18%] py-1.5 text-xs font-medium">
+						<Table.Head class="w-[14%] py-1.5 text-xs font-medium">
 							<span class="text-muted-foreground">Permissions</span>
+						</Table.Head>
+						<Table.Head class="w-[12%] py-1.5 text-xs font-medium">
+							<span class="text-muted-foreground">Owner</span>
 						</Table.Head>
 						<Table.Head class="w-[14%] py-1.5 text-xs font-medium">
 							<button type="button" class="flex items-center gap-1 hover:text-foreground" onclick={() => toggleSort('modified')}>
@@ -1047,7 +1058,7 @@
 								<svelte:component this={getSortIcon('modified')} class="w-3 h-3 opacity-50" />
 							</button>
 						</Table.Head>
-						<Table.Head class="w-[25%] py-1.5 text-xs font-medium text-right">Actions</Table.Head>
+						<Table.Head class="w-[21%] py-1.5 text-xs font-medium text-right">Actions</Table.Head>
 					</Table.Row>
 				</Table.Header>
 				<Table.Body>
@@ -1093,9 +1104,16 @@
 							<Table.Cell class="text-muted-foreground py-1">
 								{entry.type === 'directory' ? '-' : formatSize(entry.size)}
 							</Table.Cell>
-							<Table.Cell class="text-muted-foreground py-1 font-mono text-2xs">
+							<Table.Cell class="text-muted-foreground py-1 font-mono text-xs">
 								<span title={entry.permissions}>{permissionsToOctal(entry.permissions)}</span>
 								<span class="ml-1 opacity-60">{entry.permissions}</span>
+							</Table.Cell>
+							<Table.Cell class="text-muted-foreground py-1 font-mono text-xs">
+								{#if entry.owner}
+									<span title={entry.group ? `${entry.owner}:${entry.group}` : entry.owner}>{entry.owner}{#if entry.group && entry.group !== entry.owner}<span class="opacity-60">:{entry.group}</span>{/if}</span>
+								{:else}
+									<span class="opacity-40">-</span>
+								{/if}
 							</Table.Cell>
 							<Table.Cell class="text-muted-foreground py-1">
 								{formatDate(entry.modified)}
@@ -1184,7 +1202,7 @@
 						</Table.Row>
 					{/each}
 				</Table.Body>
-			</Table.Root>
+			</table>
 		{/if}
 	</div>
 
@@ -1250,10 +1268,7 @@
 
 	<!-- File Viewer Overlay -->
 	{#if loadingPreview && !viewingFile}
-		<div class="absolute inset-0 bg-background flex flex-col items-center justify-center gap-2 z-10">
-			<Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
-			<span class="text-sm text-muted-foreground">Loading preview{previewingName ? ` — ${previewingName}` : ''}…</span>
-		</div>
+		<LoadingState class="absolute inset-0 z-10 bg-background" label={`Loading preview${previewingName ? ` - ${previewingName}` : ''}...`} />
 	{:else if viewingFile}
 		<div class="absolute inset-0 bg-background flex flex-col z-10">
 			<div class="flex items-center justify-between p-2 border-b bg-muted/30">

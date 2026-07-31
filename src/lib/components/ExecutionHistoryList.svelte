@@ -7,7 +7,7 @@
 	 * the Schedules view uses.
 	 */
 	import { Check, X, AlertTriangle, Clock, CheckCheck, AlertCircle, Timer, Hand, Webhook, ChevronDown, FileText, Loader2 } from 'lucide-svelte';
-	import { formatDateTime } from '$lib/stores/settings';
+	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { formatBytes } from '$lib/utils/format';
 	import { getRepoTypeIcon } from '$lib/utils/backup';
 	import type { Execution } from '$lib/utils/execution-tally';
@@ -72,7 +72,7 @@
 {#if loading && executions.length === 0}
 	<div class="flex justify-center py-8"><Loader2 class="h-5 w-5 animate-spin text-muted-foreground" /></div>
 {:else if executions.length === 0}
-	<div class="flex flex-col items-center justify-center py-10 text-center">
+	<div class="flex min-h-[60vh] flex-col items-center justify-center py-10 text-center">
 		<Clock class="mb-3 h-10 w-10 text-muted-foreground/40" />
 		<p class="text-sm text-muted-foreground">No backup runs yet.</p>
 		<p class="mt-1 text-xs text-muted-foreground">Run a backup — its history appears here.</p>
@@ -99,13 +99,13 @@
 					{@const isFail = exec.status === 'failed'}
 					{@const isOpen = expanded.has(exec.id)}
 					<tr class="border-b text-xs last:border-0 hover:bg-muted/30">
-						<td class="py-1.5 pl-2 font-mono">{exec.triggeredAt ? formatDateTime(exec.triggeredAt, true) : '—'}</td>
+						<td class="py-1.5 pl-2">{#if exec.triggeredAt}{formatDateTime(exec.triggeredAt, true)} <span class="text-muted-foreground opacity-60">({formatRelativeTime(exec.triggeredAt)})</span>{:else}—{/if}</td>
 						<td class="py-1.5 pl-2 text-center">
 							<span class="inline-flex h-5 w-5 items-center justify-center rounded bg-muted text-muted-foreground" title={triggerLabel(exec.triggeredBy)}>
 								<TrigIcon class="h-3 w-3" />
 							</span>
 						</td>
-						<td class="py-1.5 pl-2 font-mono text-muted-foreground">{formatDuration(exec.duration)}</td>
+						<td class="py-1.5 pl-2 text-muted-foreground">{formatDuration(exec.duration)}</td>
 						<td class="py-1.5 pl-2 text-center">
 							<span class="inline-flex h-5 w-5 items-center justify-center rounded {badge.cls}" title={exec.status}>
 								<BadgeIcon class="h-3 w-3 {exec.status === 'running' ? 'animate-spin' : ''}" />

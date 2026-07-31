@@ -45,8 +45,9 @@
 
 			if (data.jobId) {
 				await watchJob(data.jobId, (line) => {
-					if (line.event === 'progress' && line.data?.message) {
-						logs = [...logs, line.data.message];
+					const msg = (line.data as { message?: string } | null)?.message;
+					if (line.event === 'progress' && msg) {
+						logs = [...logs, msg];
 					}
 				});
 				status = 'success';
