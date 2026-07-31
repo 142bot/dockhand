@@ -11,9 +11,11 @@
 	import { appSettings } from '$lib/stores/settings';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Table from '$lib/components/ui/table';
-	import { formatDateTime } from '$lib/stores/settings';
-	import { FolderOpen, Box, Layers, FileStack, Camera, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-svelte';
+	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
+	import { FolderOpen, Box, Layers, FileStack, Camera, ChevronRight, ChevronDown } from 'lucide-svelte';
 	import { formatBytes } from '$lib/utils/format';
+	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
+	import { LoadingState } from '$lib/components/ui/loading-state';
 	import { getRepoTypeIcon, getRepoTypeLabel } from '$lib/utils/backup';
 	import { shouldSaveBackupImage } from '$lib/utils/backup-image';
 	import SnapshotBrowser from '../../containers/SnapshotBrowser.svelte';
@@ -47,6 +49,7 @@
 
 	let destinations = $state<Destination[]>([]);
 	let configs = $state<BackupConfig[]>([]);
+	let environments = $state<Array<{ id: number; name: string; icon?: string }>>([]);
 	let loading = $state(true);
 	let showModal = $state(false);
 	let editingDest = $state<Destination | null>(null);
@@ -204,32 +207,82 @@
 	let browseSnapshots = $state<any[]>([]);
 	let browseLoading = $state(false);
 
-	// Snapshot list sorting — default newest first (by snapshot timestamp).
-	type BrowseSortField = 'shortId' | 'time' | 'type' | 'name';
-	let browseSort = $state<{ field: BrowseSortField; dir: 'asc' | 'desc' }>({ field: 'time', dir: 'desc' });
 	function snapName(snap: any): string {
 		return (snap.tags || []).find((t: string) => t.startsWith('dockhand:name='))?.replace('dockhand:name=', '') || '';
 	}
 	function snapType(snap: any): string {
 		return (snap.tags || []).find((t: string) => t.startsWith('dockhand:type='))?.replace('dockhand:type=', '') || '';
 	}
-	function toggleBrowseSort(field: BrowseSortField) {
-		if (browseSort.field === field) browseSort = { field, dir: browseSort.dir === 'asc' ? 'desc' : 'asc' };
-		else browseSort = { field, dir: field === 'time' ? 'desc' : 'asc' };
+	// Environment a snapshot belongs to, from its dockhand:envid tag. Returns the
+	// resolved env (name + icon) when it still exists, { missing: true } when the
+	// env was deleted, or null when the snapshot is unscoped ('local', no envid tag).
+	function snapEnv(snap: any): { id: number; name: string; icon: string } | { missing: true } | null {
+		const tag = (snap.tags || []).find((t: string) => t.startsWith('dockhand:envid='));
+		if (!tag) return null;
+		const id = parseInt(tag.replace('dockhand:envid=', ''));
+		if (isNaN(id)) return null;
+		const env = environments.find((e) => e.id === id);
+		return env ? { id: env.id, name: env.name, icon: env.icon || 'globe' } : { missing: true };
 	}
-	const sortedBrowseSnapshots = $derived.by(() => {
-		const { field, dir } = browseSort;
-		const key = (s: any) =>
-			field === 'shortId' ? (s.shortId ?? '') :
-			field === 'time' ? (s.time ?? '') :
-			field === 'type' ? snapType(s) :
-			snapName(s);
-		return [...browseSnapshots].sort((a, b) => {
+	let browseFilterName = $state('');
+	let browseFilterEnv = $state('');
+	// DataGrid sort + expand state for the repo-snapshots grid.
+	let browseGridSort = $state<{ field: string; direction: 'asc' | 'desc' }>({ field: 'latest', direction: 'desc' });
+	let browseExpandedKeys = $state<Set<unknown>>(new Set());
+
+	type SnapGroup = {
+		key: string; name: string; type: string;
+		env: { id: number; name: string; icon: string } | { missing: true } | null;
+		envLabel: string; snapshots: any[]; latest: string; count: number;
+	};
+
+	// Group the repo's snapshots by owning environment + target name. Source is the
+	// snapshot tags (name/type/envid), NOT backup_configs — so this works on a fresh
+	// instance with no configs (the restore-on-new-box case). Env is resolved eagerly
+	// in-memory from the already-fetched tags + environments list (no per-snapshot I/O).
+	const browseGroups = $derived.by(() => {
+		const nf = browseFilterName.trim().toLowerCase();
+		const ef = browseFilterEnv.trim().toLowerCase();
+		const groups = new Map<string, SnapGroup>();
+		for (const s of browseSnapshots) {
+			const name = snapName(s);
+			const e = snapEnv(s);
+			const envLabel = e ? ('missing' in e ? 'missing' : e.name) : '';
+			if (nf && !name.toLowerCase().includes(nf)) continue;
+			if (ef && !envLabel.toLowerCase().includes(ef)) continue;
+			const envKey = e ? ('missing' in e ? 'missing' : String(e.id)) : 'local';
+			const gkey = `${envKey}:${name}`;
+			let g = groups.get(gkey);
+			if (!g) { g = { key: gkey, name, type: snapType(s), env: e, envLabel, snapshots: [], latest: '', count: 0 }; groups.set(gkey, g); }
+			g.snapshots.push(s);
+		}
+		const arr = [...groups.values()];
+		for (const g of arr) {
+			g.snapshots.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''));
+			g.latest = g.snapshots[0]?.time ?? '';
+			g.count = g.snapshots.length;
+		}
+		const { field, direction } = browseGridSort;
+		const key = (g: SnapGroup) =>
+			field === 'type' ? g.type :
+			field === 'envLabel' ? g.envLabel :
+			field === 'latest' ? g.latest :
+			field === 'count' ? String(g.count).padStart(6, '0') :
+			g.name;
+		arr.sort((a, b) => {
 			const ka = key(a), kb = key(b);
 			const cmp = ka < kb ? -1 : ka > kb ? 1 : 0;
-			return dir === 'asc' ? cmp : -cmp;
+			return direction === 'asc' ? cmp : -cmp;
 		});
+		return arr;
 	});
+
+	function toggleBrowseGroup(g: SnapGroup) {
+		const next = new Set(browseExpandedKeys);
+		next.has(g.key) ? next.delete(g.key) : next.add(g.key);
+		browseExpandedKeys = next;
+	}
+
 
 	// Snapshot file browser
 	let snapshotBrowseOpen = $state(false);
@@ -282,13 +335,15 @@
 		loading = true;
 		repoStats = new Map();
 		try {
-			const [destRes, configRes] = await Promise.all([
+			const [destRes, configRes, envRes] = await Promise.all([
 				fetch('/api/backup/destinations'),
-				fetch('/api/backup/configs')
+				fetch('/api/backup/configs'),
+				fetch('/api/environments')
 			]);
 			destinations = await destRes.json();
 			const configData = await configRes.json();
 			configs = Array.isArray(configData) ? configData : [];
+			if (envRes.ok) { const envData = await envRes.json(); environments = Array.isArray(envData) ? envData : []; }
 		} catch (error) {
 			console.error('Failed to fetch backup data:', error);
 			toast.error('Failed to fetch backup destinations');
@@ -602,7 +657,7 @@
 />
 
 <Dialog.Root bind:open={browseOpen}>
-	<Dialog.Content class="max-w-2xl h-[70vh] flex flex-col overflow-hidden">
+	<Dialog.Content class="max-w-6xl w-[calc(100vw-4rem)] h-[88vh] flex flex-col overflow-hidden">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2">
 				<FolderOpen class="w-5 h-5" />
@@ -611,60 +666,100 @@
 				<span class="text-amber-600 dark:text-amber-400">{browseDestName}</span>
 			</Dialog.Title>
 		</Dialog.Header>
-		<div class="flex-1 overflow-y-auto">
+		{#if !browseLoading && browseSnapshots.length > 0}
+			<div class="flex gap-2 pb-3 flex-shrink-0">
+				<Input bind:value={browseFilterName} placeholder="Filter by name..." class="h-8 max-w-xs" />
+				<Input bind:value={browseFilterEnv} placeholder="Filter by environment..." class="h-8 max-w-xs" />
+			</div>
+		{/if}
+		<div class="flex-1 min-h-0">
 			{#if browseLoading}
-				<div class="flex items-center justify-center py-12"><Loader2 class="w-6 h-6 animate-spin text-muted-foreground" /></div>
+				<LoadingState class="h-full" label="Loading snapshots..." />
 			{:else if browseSnapshots.length === 0}
-				<p class="text-sm text-muted-foreground p-4">No snapshots in this repository.</p>
+				<div class="flex h-full items-center justify-center"><p class="text-sm text-muted-foreground">No snapshots in this repository.</p></div>
 			{:else}
-				{#snippet sortHead(field: BrowseSortField, label: string, extra = '')}
-					<Table.Head class={extra}>
-						<button type="button" class="inline-flex items-center gap-1 hover:text-foreground transition-colors" onclick={() => toggleBrowseSort(field)}>
-							{label}
-							{#if browseSort.field === field}
-								{#if browseSort.dir === 'asc'}<ArrowUp class="w-3 h-3" />{:else}<ArrowDown class="w-3 h-3" />{/if}
+				<DataGrid
+					data={browseGroups}
+					keyField="key"
+					gridId="repoSnapshots"
+					rowHeight={36}
+					sortState={{ field: browseGridSort.field, direction: browseGridSort.direction }}
+					onSortChange={(s) => browseGridSort = { field: s.field, direction: s.direction }}
+					expandable
+					bind:expandedKeys={browseExpandedKeys}
+					onRowClick={(g) => toggleBrowseGroup(g)}
+					class="border-none"
+					wrapperClass="border rounded-lg h-full"
+				>
+					{#snippet cell(column, group, rowState)}
+						{#if column.id === 'expand'}
+							<button type="button" class="p-0.5 hover:bg-muted rounded transition-colors" onclick={(e) => { e.stopPropagation(); toggleBrowseGroup(group); }}>
+								{#if rowState.isExpanded}<ChevronDown class="w-3 h-3" />{:else}<ChevronRight class="w-3 h-3" />{/if}
+							</button>
+						{:else if column.id === 'name'}
+							<span class="inline-flex items-center gap-1.5 min-w-0">
+								<span class="text-xs font-medium truncate">{group.name}</span>
+								<span class="shrink-0 rounded-full bg-primary/15 px-1.5 text-2xs text-primary">{group.count}</span>
+							</span>
+						{:else if column.id === 'type'}
+							<div class="flex justify-center">
+								{#if group.type === 'stack'}
+									<Layers class="w-3.5 h-3.5 text-purple-500" />
+								{:else}
+									<Box class="w-3.5 h-3.5 text-blue-500" />
+								{/if}
+							</div>
+						{:else if column.id === 'environment'}
+							{#if group.env && !('missing' in group.env)}
+								<span class="inline-flex items-center gap-1.5 text-xs truncate">
+									<EnvironmentIcon icon={group.env.icon} envId={group.env.id} class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+									<span class="truncate">{group.env.name}</span>
+								</span>
+							{:else if group.env}
+								<Badge variant="secondary" class="text-2xs font-normal text-muted-foreground">missing</Badge>
 							{:else}
-								<ArrowUpDown class="w-3 h-3 opacity-40" />
+								<span class="text-xs text-muted-foreground">—</span>
 							{/if}
-						</button>
-					</Table.Head>
-				{/snippet}
-				<Table.Root>
-					<Table.Header>
-						<Table.Row>
-							{@render sortHead('shortId', 'ID', 'w-24')}
-							{@render sortHead('time', 'Created')}
-							{@render sortHead('type', 'Type', 'w-16')}
-							{@render sortHead('name', 'Name')}
-							<Table.Head class="w-12 text-right">Browse</Table.Head>
-						</Table.Row>
-					</Table.Header>
-					<Table.Body>
-						{#each sortedBrowseSnapshots as snap}
-							{@const name = snapName(snap)}
-							{@const type = snapType(snap)}
-							<Table.Row class="cursor-pointer hover:bg-muted/50" onclick={() => { snapshotBrowseDestId = browseDestId; snapshotBrowseId = snap.id; snapshotBrowseName = name; snapshotBrowseOpen = true; }}>
-								<Table.Cell class="font-mono text-xs text-muted-foreground">{snap.shortId}</Table.Cell>
-								<Table.Cell class="text-xs">{formatDateTime(snap.time)}</Table.Cell>
-								<Table.Cell>
-									{#if type === 'container'}
-										<Box class="w-3.5 h-3.5 text-blue-500" />
-									{:else if type === 'stack'}
-										<Layers class="w-3.5 h-3.5 text-purple-500" />
-									{:else}
-										<Box class="w-3.5 h-3.5 text-muted-foreground" />
-									{/if}
-								</Table.Cell>
-								<Table.Cell class="text-xs">{name}</Table.Cell>
-								<Table.Cell class="text-right">
-									<span class="inline-flex p-1 rounded hover:bg-muted transition-colors text-muted-foreground" title="Browse snapshot content">
-										<FolderOpen class="w-3.5 h-3.5" />
-									</span>
-								</Table.Cell>
-							</Table.Row>
-						{/each}
-					</Table.Body>
-				</Table.Root>
+						{:else if column.id === 'latest'}
+							{#if group.latest}
+								<span class="text-xs text-muted-foreground">{formatDateTime(group.latest)} <span class="opacity-60">({formatRelativeTime(group.latest)})</span></span>
+							{:else}
+								<span class="text-xs text-muted-foreground">—</span>
+							{/if}
+						{:else if column.id === 'snapshots'}
+							<span class="text-xs text-muted-foreground">{group.count}</span>
+						{/if}
+					{/snippet}
+
+					{#snippet expandedRow(group)}
+						<div class="px-8 py-2">
+							<div class="max-h-64 overflow-y-auto pr-2 rounded-md border bg-muted/20">
+								<Table.Root>
+									<Table.Header class="sticky top-0 z-10 bg-background">
+										<Table.Row>
+											<Table.Head class="w-28 py-1.5 text-xs" style="padding-left:8px">ID</Table.Head>
+											<Table.Head class="py-1.5 text-xs" style="padding-left:8px">Created</Table.Head>
+											<Table.Head class="w-16 py-1.5 text-xs text-right" style="padding-right:8px">Browse</Table.Head>
+										</Table.Row>
+									</Table.Header>
+									<Table.Body>
+										{#each group.snapshots as snap}
+											<Table.Row class="cursor-pointer hover:bg-muted/50" onclick={() => { snapshotBrowseDestId = browseDestId; snapshotBrowseId = snap.id; snapshotBrowseName = group.name; snapshotBrowseOpen = true; }}>
+												<Table.Cell class="font-mono text-xs text-muted-foreground py-1" style="padding-left:8px">{snap.shortId}</Table.Cell>
+												<Table.Cell class="text-xs py-1" style="padding-left:8px">{formatDateTime(snap.time)} <span class="text-muted-foreground opacity-60">({formatRelativeTime(snap.time)})</span></Table.Cell>
+												<Table.Cell class="text-right py-1">
+													<span class="inline-flex p-1 rounded hover:bg-muted transition-colors text-muted-foreground" title="Browse snapshot content">
+														<FolderOpen class="w-3.5 h-3.5" />
+													</span>
+												</Table.Cell>
+											</Table.Row>
+										{/each}
+									</Table.Body>
+								</Table.Root>
+							</div>
+						</div>
+					{/snippet}
+				</DataGrid>
 			{/if}
 		</div>
 		<Dialog.Footer class="pt-4">

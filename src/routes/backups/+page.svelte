@@ -22,7 +22,7 @@
 		CheckCircle, XCircle, AlertCircle, Loader2, Clock, X, ArrowLeftRight, Package, Pencil
 	} from 'lucide-svelte';
 	import RotateCwFadingClock from '$lib/components/icons/RotateCwFadingClock.svelte';
-	import { formatDateTime } from '$lib/stores/settings';
+	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { currentEnvironment } from '$lib/stores/environment';
 	import { watchJob } from '$lib/utils/sse-fetch';
 	import { getRepoTypeIcon, formatCron, retentionSummary, classifyJobResult, tagLogLine } from '$lib/utils/backup';
@@ -123,14 +123,29 @@
 	let logModalLogs = $state<string[]>([]);
 	let logModalError = $state('');
 	let logModalConfigId = $state<number | null>(null);
+	// True once the backup passes the point cancel can still stop it: restic is done,
+	// the snapshot exists, and only repo-only phases (verify / retention) remain — these
+	// run in-process and aren't killable, so we disable Cancel rather than let it lie.
+	let logModalPastCancel = $state(false);
+	const canCancelBackup = $derived(logModalStatus === 'running' && !logModalPastCancel);
 
 	async function stopBackup() {
 		if (!logModalConfigId) return;
 		try {
-			await fetch(`/api/backup/configs/${logModalConfigId}/stop`, { method: 'POST' });
-			logModalLogs = [...logModalLogs, '⚠ Backup cancelled by user'];
-			logModalStatus = 'error';
-			logModalError = 'Cancelled';
+			const res = await fetch(`/api/backup/configs/${logModalConfigId}/stop`, { method: 'POST' });
+			const body = await res.json().catch(() => ({}));
+			// Only declare it cancelled if the backend actually signalled a running
+			// helper. If it was already past the point of no return (restic done,
+			// applying retention), `stopped` is false — let the real progress stream
+			// finish and report the true 'Completed' status instead of a false 'Cancelled'.
+			if (body?.stopped) {
+				logModalLogs = [...logModalLogs, '⚠ Backup cancelled by user'];
+				logModalStatus = 'error';
+				logModalError = 'Cancelled';
+			} else {
+				logModalLogs = [...logModalLogs, 'Backup is finishing and can no longer be cancelled.'];
+				toast.info('Backup was already finishing — it will complete.');
+			}
 		} catch { toast.error('Failed to stop backup'); }
 	}
 	let confirmDeleteSnapshot = $state<string | null>(null);
@@ -460,6 +475,7 @@
 		logModalLogs = [];
 		logModalError = '';
 		logModalProgress = 0;
+		logModalPastCancel = false;
 		logModalOpen = true;
 		try {
 			const res = await fetch(`/api/backup/configs/${config.id}/run`, { method: 'POST' });
@@ -469,6 +485,11 @@
 					const d = line.data as any;
 					if (line.event === 'progress' && d?.message) {
 						logModalLogs = [...logModalLogs, tagLogLine(d.message)];
+						// Once restic is done and only repo-only phases remain, cancel can no
+						// longer stop the backup — the snapshot already exists. Disable Cancel.
+						if (d.status === 'verifying' || d.status === 'pruning' || d.status === 'restarted') {
+							logModalPastCancel = true;
+						}
 						// (audit #15) Prefer the structured restic percent from detail;
 						// fall back to the free-form "XX% done" message regex.
 						if (d.status === 'progress' && typeof d.detail?.percent_done === 'number') {
@@ -770,9 +791,9 @@
 				{:else if column.id === 'type'}
 					<div class="flex justify-center">
 						{#if config.type === 'container'}
-							<Tooltip.Root><Tooltip.Trigger><Box class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">Container backup</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><Box class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content>Container backup</Tooltip.Content></Tooltip.Root>
 						{:else}
-							<Tooltip.Root><Tooltip.Trigger><Layers class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">Stack backup</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><Layers class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content>Stack backup</Tooltip.Content></Tooltip.Root>
 						{/if}
 					</div>
 				{:else if column.id === 'environment'}
@@ -794,7 +815,7 @@
 									<span class="truncate">{config.destinationName}</span>
 								</div>
 							</Tooltip.Trigger>
-							<Tooltip.Content class="whitespace-nowrap"><span class="font-mono text-xs">{config.destinationRepository}</span></Tooltip.Content>
+							<Tooltip.Content><span class="font-mono text-xs">{config.destinationRepository}</span></Tooltip.Content>
 						</Tooltip.Root>
 					{:else}
 						<span class="text-xs text-muted-foreground">—</span>
@@ -812,7 +833,7 @@
 					</div>
 				{:else if column.id === 'lastBackup'}
 					{#if config.lastBackupAt}
-						<span class="text-xs">{formatDateTime(config.lastBackupAt)}</span>
+						<span class="text-xs">{formatDateTime(config.lastBackupAt)} <span class="text-muted-foreground opacity-60">({formatRelativeTime(config.lastBackupAt)})</span></span>
 					{:else}
 						<span class="text-xs text-muted-foreground">Never</span>
 					{/if}
@@ -834,15 +855,15 @@
 				{:else if column.id === 'status'}
 					<div class="flex items-center justify-center">
 						{#if config.isOrphan}
-							<Tooltip.Root><Tooltip.Trigger><AlertCircle class="w-3 h-3 text-amber-500" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">No schedule — snapshots found in repository</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><AlertCircle class="w-3 h-3 text-amber-500" /></Tooltip.Trigger><Tooltip.Content>No schedule — snapshots found in repository</Tooltip.Content></Tooltip.Root>
 						{:else if runningBackup === config.id}
-							<Tooltip.Root><Tooltip.Trigger><Loader2 class="w-3 h-3 text-primary animate-spin" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">Backup in progress</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><Loader2 class="w-3 h-3 text-primary animate-spin" /></Tooltip.Trigger><Tooltip.Content>Backup in progress</Tooltip.Content></Tooltip.Root>
 						{:else if config.lastBackupStatus === 'success'}
-							<Tooltip.Root><Tooltip.Trigger><CheckCircle class="w-3 h-3 text-green-500" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">Last backup succeeded</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><CheckCircle class="w-3 h-3 text-green-500" /></Tooltip.Trigger><Tooltip.Content>Last backup succeeded</Tooltip.Content></Tooltip.Root>
 						{:else if config.lastBackupStatus === 'failed'}
-							<Tooltip.Root><Tooltip.Trigger><XCircle class="w-3 h-3 text-destructive" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">Last backup failed</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><XCircle class="w-3 h-3 text-destructive" /></Tooltip.Trigger><Tooltip.Content>Last backup failed</Tooltip.Content></Tooltip.Root>
 						{:else}
-							<Tooltip.Root><Tooltip.Trigger><AlertCircle class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content class="whitespace-nowrap">No backup run yet</Tooltip.Content></Tooltip.Root>
+							<Tooltip.Root><Tooltip.Trigger><AlertCircle class="w-3 h-3 text-muted-foreground" /></Tooltip.Trigger><Tooltip.Content>No backup run yet</Tooltip.Content></Tooltip.Root>
 						{/if}
 					</div>
 				{:else if column.id === 'actions'}
@@ -936,7 +957,7 @@
 										{@const isDiffPending = diffPending?.snapshot.id === snapshot.id}
 										<tr class="border-b last:border-0 hover:bg-muted/30 text-xs {isDiffPending ? 'bg-primary/10' : ''}">
 											<td class="py-1.5 font-mono text-muted-foreground" style="padding-left:8px">{snapshot.shortId}</td>
-											<td class="py-1.5" style="padding-left:8px">{formatDateTime(snapshot.time)}</td>
+											<td class="py-1.5" style="padding-left:8px">{formatDateTime(snapshot.time)} <span class="text-muted-foreground opacity-60">({formatRelativeTime(snapshot.time)})</span></td>
 											<td class="py-1.5 text-muted-foreground" style="padding-left:8px">
 												{#if stats}
 													{stats.filesNew} new, {stats.filesChanged} changed · {formatBytes(stats.dataAdded)}
@@ -1037,7 +1058,7 @@
 	progress={logModalProgress}
 	logs={logModalLogs}
 	error={logModalError}
-	onStop={logModalStatus === 'running' ? stopBackup : undefined}
+	onStop={canCancelBackup ? stopBackup : undefined}
 />
 
 <SnapshotDiffModal

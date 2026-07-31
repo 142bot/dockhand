@@ -3,7 +3,8 @@
 	import { toast } from 'svelte-sonner';
 	import { Loader2, FolderOpen, RotateCcw, Trash2, ArrowLeftRight, HardDrive, Archive, RefreshCw } from 'lucide-svelte';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
-	import { formatDateTime } from '$lib/stores/settings';
+	import { LoadingState } from '$lib/components/ui/loading-state';
+	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { formatBytes } from '$lib/utils/format';
 	import { getRepoTypeIcon } from '$lib/utils/backup';
 	import SnapshotBrowser from './SnapshotBrowser.svelte';
@@ -225,12 +226,9 @@
 	<!-- First load only: a quiet spinner, no skeleton. On a refresh where rows already
 	     exist we fall through and keep the real table visible (the header refresh icon
 	     already signals progress). Matches the History tab's empty/loading treatment. -->
-	<div class="flex flex-col items-center justify-center py-10 text-center">
-		<Loader2 class="mb-3 h-8 w-8 animate-spin text-muted-foreground/40" />
-		<p class="text-sm text-muted-foreground">Loading snapshots…</p>
-	</div>
+	<LoadingState class="min-h-[50vh]" label="Loading snapshots..." />
 {:else if snapshots.length === 0}
-	<div class="flex flex-col items-center justify-center py-10 text-center">
+	<div class="flex min-h-[60vh] flex-col items-center justify-center py-10 text-center">
 		<Archive class="mb-3 h-10 w-10 text-muted-foreground/40" />
 		<p class="text-sm text-muted-foreground">No snapshots yet for {targetName}.</p>
 		<p class="mt-1 text-xs text-muted-foreground">Run a backup from the Schedules tab to create one.</p>
@@ -276,7 +274,7 @@
 					{@const st = stats.get(s.id)}
 					<tr class="border-b text-xs last:border-0 hover:bg-muted/30 {isDiffPending ? 'bg-primary/10' : ''}">
 						<td class="py-1.5 pl-2 font-mono text-muted-foreground">{s.shortId}</td>
-						<td class="py-1.5 pl-2">{formatDateTime(s.time)}</td>
+						<td class="py-1.5 pl-2">{formatDateTime(s.time)} <span class="text-muted-foreground opacity-60">({formatRelativeTime(s.time)})</span></td>
 						<td class="py-1.5 pl-2 text-muted-foreground" title={st ? `${st.filesNew} new, ${st.filesChanged} changed files` : ''}>{st ? formatBytes(st.dataAdded) : '—'}</td>
 						<td class="py-1.5 pl-2 text-muted-foreground">
 							<span class="flex items-center gap-1.5"><RepoIcon class="h-3.5 w-3.5 text-primary/70" />{s._destinationName}</span>

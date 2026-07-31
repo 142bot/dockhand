@@ -151,6 +151,19 @@ export const backupColumns: ColumnConfig[] = [
 	{ id: 'actions', label: '', fixed: 'end', width: 100, resizable: false }
 ];
 
+// Repository-snapshots grid columns (the "Repository snapshots on X" dialog).
+// Groups the repo's snapshots by environment + target name; source is the repo's
+// own snapshot tags, NOT backup_configs (so it works on a fresh instance with no
+// configs). No repository column (the dialog IS one repo), no select column.
+export const repoSnapshotColumns: ColumnConfig[] = [
+	{ id: 'expand', label: '', fixed: 'start', width: 24, resizable: false },
+	{ id: 'name', label: 'Name', sortable: true, sortField: 'name', width: 200, minWidth: 120, grow: true },
+	{ id: 'type', label: 'Type', sortable: true, sortField: 'type', width: 50, minWidth: 40, resizable: false, align: 'center' as any, hint: 'Container or stack backup' },
+	{ id: 'environment', label: 'Environment', sortable: true, sortField: 'envLabel', width: 160, minWidth: 100 },
+	{ id: 'latest', label: 'Latest', sortable: true, sortField: 'latest', width: 150, minWidth: 100 },
+	{ id: 'snapshots', label: 'Snapshots', sortable: true, sortField: 'count', width: 90, minWidth: 60, align: 'center' as any }
+];
+
 // Backup destination grid columns
 export const backupDestinationColumns: ColumnConfig[] = [
 	{ id: 'type', label: 'Type', width: 80, minWidth: 60, resizable: false },
@@ -191,6 +204,7 @@ export const gridColumnConfigs: Record<GridId, ColumnConfig[]> = {
 	environments: environmentColumns,
 	backupDestinations: backupDestinationColumns,
 	backups: backupColumns,
+	repoSnapshots: repoSnapshotColumns,
 	vulnerabilities: vulnerabilityColumns
 };
 
