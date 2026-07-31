@@ -28,7 +28,15 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	try {
 		const metadata = await getSnapshotMetadata(destinationId, snapshotId);
 		if (!metadata) return json({ error: 'No metadata available' }, { status: 404 });
-		return json(metadata);
+		// Never expose the stored secret VALUES (ciphertext) to the client — replace the
+		// `secrets` array with `secretKeys` (names only) so the UI can list them.
+		const { secrets, ...safe } = metadata as Record<string, unknown>;
+		if (Array.isArray(secrets)) {
+			(safe as Record<string, unknown>).secretKeys = secrets
+				.map((s: any) => s?.key)
+				.filter((k: unknown): k is string => typeof k === 'string');
+		}
+		return json(safe);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		return json({ error: msg }, { status: 500 });

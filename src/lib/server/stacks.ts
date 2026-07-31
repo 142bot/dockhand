@@ -2126,6 +2126,11 @@ export async function redeployStackFromDir(
 	const envPath = join(stackDir, '.env');
 	const hasEnv = existsSync(envPath);
 	const envVars = hasEnv ? parseEnvFileContent(readFileSync(envPath, 'utf-8'), stackName) : undefined;
+	// Secret env vars are stored encrypted in the DB and deliberately never written
+	// to the snapshot's .env, so the extracted dir has no copy of them. Load them
+	// from the DB and inject them like every other compose path does (#1329) —
+	// otherwise a restored stack comes up with its secrets interpolating to "".
+	const secretVars = await getSecretEnvVarsAsRecord(stackName, envId);
 	// For Hawser, ship the entire tree (compose + include:d files + sidecars + .env).
 	const stackFiles = await readDirFilesAsMap(stackDir);
 	return await executeComposeCommand(
@@ -2139,7 +2144,8 @@ export async function redeployStackFromDir(
 			stackFiles
 		},
 		composeContent,
-		envVars
+		envVars,
+		secretVars
 	);
 }
 
@@ -2180,8 +2186,8 @@ export async function startStack(
 	}
 
 	// Git stacks need useOverrideFile to write .env.dockhand with DB overrides.
-	// sourceType is plumbed through from requireComposeFile (which already looked
-	// it up via getStackComposeFile/getStackSource) to avoid a redundant DB lookup.
+	// sourceType is plumbed through from requireComposeFile (which already looked it up
+	// via getStackComposeFile/getStackSource) to avoid a redundant DB lookup.
 	const isGitStack = result.sourceType === 'git';
 
 	const opts: ComposeCommandOptions = { stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack };
@@ -2220,7 +2226,9 @@ export async function stopStack(
 		return fallback;
 	}
 
-	// Git stacks need useOverrideFile to write .env.dockhand with DB overrides.
+	// Git stacks need useOverrideFile so `.env.dockhand` (the panel vars) is passed via
+	// --env-file; otherwise `docker compose stop` re-interpolates ${VAR:?} in the compose
+	// file with the panel vars missing and errors (#1313). Matches startStack/deployStack.
 	// sourceType is plumbed through from requireComposeFile to avoid a redundant DB lookup.
 	const isGitStack = result.sourceType === 'git';
 
@@ -2301,7 +2309,7 @@ export async function downStack(
 		return withContainerFallback(stackName, envId, 'stop');
 	}
 
-	// Git stacks need useOverrideFile to write .env.dockhand with DB overrides.
+	// useOverrideFile for git stacks — same reason as stopStack (#1313).
 	// sourceType is plumbed through from requireComposeFile to avoid a redundant DB lookup.
 	const isGitStack = result.sourceType === 'git';
 
@@ -2332,6 +2340,11 @@ export async function removeStack(
 	return withStackLock(stackName, async () => {
 		// Get compose file (may not exist for external stacks)
 		const composeResult = await getStackComposeFile(stackName, envId);
+
+		// useOverrideFile for git stacks — same reason as stopStack (#1313).
+		// sourceType is plumbed through from getStackComposeFile (which already looked it
+		// up via getStackSource) to avoid a redundant DB lookup.
+		const isGitStack = composeResult.sourceType === 'git';
 
 		// Get stack containers BEFORE removing them (for cleanup later)
 		const stackContainers = await getStackContainers(stackName, envId);
@@ -2367,6 +2380,7 @@ export async function removeStack(
 					workingDir: composeResult.stackDir,
 					composePath: composeResult.composePath ?? undefined,
 					envPath: composeResult.envPath ?? undefined,
+					useOverrideFile: isGitStack,
 					// Full stack removal: the Hawser agent cleans its stack dir (#1162)
 					removeFiles: true,
 					filesToDelete: removalFiles

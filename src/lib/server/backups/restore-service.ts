@@ -90,8 +90,10 @@ export interface RestorePorts {
 	/** Recreate a container AS-IS from the snapshot's stored inspect config; throws
 	 * with a clear message if that metadata is missing/insufficient. */
 	recreateContainerFromMetadata(name: string, envId: number | null | undefined, snapshotMetaContainer: unknown): Promise<void>;
-	/** Redeploy a stack from the snapshot's stored compose files; throws if absent. */
-	redeployStack(name: string, envId: number | null | undefined, destinationId: number, snapshotId: string): Promise<void>;
+	/** Redeploy a stack from the snapshot's stored compose files; throws if absent.
+	 *  restoreSecrets (opt-in, default on): write the stack's secrets carried in the
+	 *  snapshot into the target env's DB before redeploy so the stack comes up complete. */
+	redeployStack(name: string, envId: number | null | undefined, destinationId: number, snapshotId: string, restoreSecrets?: boolean): Promise<void>;
 	/** Read the snapshot's stored restore metadata (metadata.json), or null. */
 	readSnapshotMetadata(destinationId: number, snapshotId: string): Promise<any | null>;
 	/** Write the snapshot's captured stack files (/metadata/stacks/<name>/stackfiles/)
@@ -147,6 +149,10 @@ export interface RestoreJob {
 	 * Presence of ANY entry (or a recreate/redeploy postRestore) selects the clone
 	 * path. */
 	volumeDestinations?: Array<{ volume: string; kind: 'volume' | 'path'; target: string }>;
+	/** Whether to restore the stack's secrets carried in the snapshot (default true).
+	 * false = bring the stack up without secrets (the operator re-enters them). Only
+	 * meaningful for a stack redeploy. */
+	restoreSecrets?: boolean;
 }
 
 export class RestoreService {
@@ -617,7 +623,7 @@ export class RestoreService {
 						return { action, ok: false, error: 'no stack files stored in this snapshot; cannot redeploy' };
 					}
 					op.progress('redeploying', `Redeploying stack ${name}...`);
-					await this.ports.redeployStack(name, envId, job.destinationId, job.snapshotId);
+					await this.ports.redeployStack(name, envId, job.destinationId, job.snapshotId, job.restoreSecrets ?? true);
 					return { action, ok: true };
 				}
 			}

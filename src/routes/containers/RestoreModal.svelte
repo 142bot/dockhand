@@ -6,7 +6,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
-	import { RotateCcw, AlertTriangle, Loader2, HardDrive, Folder, Clock, Play, CheckCircle2, XCircle, Server, PackagePlus, Ban, Rocket, Box, Layers, HelpCircle, Info } from 'lucide-svelte';
+	import { RotateCcw, AlertTriangle, Loader2, HardDrive, Folder, Clock, Play, CheckCircle2, XCircle, Server, PackagePlus, Ban, Rocket, Box, Layers, HelpCircle, Info, KeyRound } from 'lucide-svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { toast } from 'svelte-sonner';
 	import { watchJob } from '$lib/utils/sse-fetch';
@@ -89,6 +89,12 @@
 	// in-place still knows which env holds the live target (otherwise the button stays
 	// disabled and the header shows "on " with no name).
 	let sourceEnvId = $state<number | undefined>(undefined);
+	// Names (never values) of the secrets carried IN this snapshot. The values are
+	// stored encrypted under this instance's key; restoring writes them back into the
+	// target env's DB so the stack comes up complete. Default ON — a restore is meant to
+	// reproduce a working stack. Off = bring it up without secrets (re-enter by hand).
+	let sourceSecretKeys = $state<string[]>([]);
+	let restoreSecrets = $state(true);
 	// Volume names that already exist on the chosen target env (for conflict marks).
 	let existingTargetVolumes = $state<string[]>([]);
 	// Target-NAME collision: a container/stack of the restore's name already exists
@@ -113,6 +119,9 @@
 	// The snapshot's source env (for the "from <env>" phrasing in the summary).
 	const sourceEnv = $derived(envList.find((e) => e.id === sourceEnvId));
 	const sourceEnvName = $derived(sourceEnv?.name ?? '');
+	// Offer the "restore secrets from this backup" toggle whenever this is a stack
+	// snapshot that actually carries secrets — same UI for in-place and cross-env.
+	const showSecretRestore = $derived(targetIsStack && sourceSecretKeys.length > 0);
 	const postRestoreLabel = $derived(postRestoreOptions.find((o) => o.value === postRestore)?.label ?? '');
 	// Step-rail styling: always neutral (primary). Only the What-will-happen box
 	// turns red on the destructive (in-place) path — the rail/numbers stay calm.
@@ -309,6 +318,7 @@
 				// unselected on purpose — the user picks it.
 				if (sourceEnvId == null) sourceEnvId = data.sourceEnvironmentId;
 			}
+			sourceSecretKeys = Array.isArray(data.sourceSecretKeys) ? data.sourceSecretKeys : [];
 		} catch {
 			error = 'Failed to read the snapshot';
 		} finally {
@@ -342,6 +352,10 @@
 					volumes: selectedRows.map((v) => v.name),
 					environmentId: effectiveEnvId,
 					targetName: containerName,
+					// Restore the stack's secrets carried in the snapshot. Only send false
+					// when the toggle is shown and the user turned it off; otherwise the
+					// server default (restore them) applies.
+					restoreSecrets: showSecretRestore ? restoreSecrets : undefined,
 					confirmOverwrite: mode === 'in-place' ? confirmOverwrite : undefined,
 					// postRestore is sent for BOTH modes now (clone brings the target up).
 					postRestore,
@@ -538,6 +552,9 @@
 						</div>
 					{#if volumes.length === 0}
 						<p class="text-sm text-muted-foreground">This snapshot has no volumes — restore recreates the {targetIsStack ? 'stack' : 'container'} from its saved config.</p>
+						{#if showSecretRestore}
+							<div class="rounded border p-2">{@render secretRestoreBlock()}</div>
+						{/if}
 					{:else if mode === 'new-location'}
 						<!-- Clone mode: each selected volume maps to an editable DESTINATION on
 						     the target env. Default is the original location (1:1 clone). -->
@@ -581,6 +598,7 @@
 									{/if}
 								</div>
 							{/each}
+							{@render secretRestoreBlock()}
 						</div>
 					{:else}
 						<div class="space-y-1.5 rounded border p-2">
@@ -597,6 +615,7 @@
 									<span class="truncate font-mono">{vol.name}</span>
 								</label>
 							{/each}
+							{@render secretRestoreBlock()}
 						</div>
 					{/if}
 					</div>
@@ -666,6 +685,42 @@
 				{#snippet envChip(env: { id: number; icon?: string | null } | undefined, name: string)}
 					<span class="inline-flex items-center gap-1 align-middle font-medium text-amber-500">{#if env}<EnvironmentIcon icon={env.icon || 'globe'} envId={env.id} class="h-3.5 w-3.5" />{/if}{name || '…'}</span>
 				{/snippet}
+				<!-- Secrets restored from the snapshot — rendered INSIDE the "what gets
+				     restored" volume box so it reads as one coherent list. Ciphertext is
+				     encrypted under this instance's key; restoring writes it to the target. -->
+				{#snippet secretRestoreBlock()}
+					{#if showSecretRestore}
+						<div class="space-y-2 border-t pt-2 {volumes.length > 0 ? 'mt-1.5' : ''}">
+							<label class="flex cursor-pointer items-start gap-2 text-sm">
+								<Checkbox bind:checked={restoreSecrets} class="mt-0.5" />
+								<KeyRound class="h-4 w-4 shrink-0 translate-y-0.5 text-amber-500" />
+								<span>
+									Restore {sourceSecretKeys.length} secret{sourceSecretKeys.length === 1 ? '' : 's'} from this backup.
+									<span class="block text-xs text-muted-foreground">
+										Turn off to bring the stack up without secrets and set them by hand.
+									</span>
+								</span>
+							</label>
+							<div class="flex flex-wrap gap-1 pl-6">
+								{#each sourceSecretKeys as key}
+									<code class="rounded bg-muted px-1.5 py-0.5 text-xs">{key}</code>
+								{/each}
+							</div>
+							{#if restoreSecrets}
+								<div class="flex items-start gap-1.5 pl-6 text-xs text-amber-600 dark:text-amber-500">
+									<AlertTriangle class="h-3.5 w-3.5 shrink-0 translate-y-0.5" />
+									<span>
+										Secrets are encrypted with this Dockhand instance's key. Restoring on a
+										different instance requires the same encryption key
+										(<code class="rounded bg-muted px-1 py-0.5">.encryption_key</code> /
+										<code class="rounded bg-muted px-1 py-0.5">ENCRYPTION_KEY</code>), or they
+										stay unreadable.
+									</span>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				{/snippet}
 				<div class="mt-3 rounded-md border border-l-[3px] p-3 text-sm {mode === 'in-place' ? 'border-l-destructive bg-destructive/5' : 'border-l-primary bg-primary/5'}">
 					<div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
 						{#if mode === 'in-place'}<AlertTriangle class="h-3.5 w-3.5 text-destructive" />{:else}<Info class="h-3.5 w-3.5 text-primary" />{/if}
@@ -713,6 +768,15 @@
 							<p class="mt-1.5 leading-relaxed">Then Dockhand will <b>{postRestoreLabel.toLowerCase()}</b> on {@render envChip(targetEnv, targetEnvName)}{#if sourceEnvName && sourceEnvName !== targetEnvName}. Nothing on {@render envChip(sourceEnv, sourceEnvName)} is touched{/if}.</p>
 						{:else}
 							<p class="mt-1.5 leading-relaxed">The {targetIsStack ? 'stack' : 'container'} is <b>not started</b> — the data lands on {@render envChip(targetEnv, targetEnvName)} and you bring it up yourself.</p>
+						{/if}
+						{#if showSecretRestore}
+							<p class="mt-1.5 leading-relaxed">
+								{#if restoreSecrets}
+									Its <b>{sourceSecretKeys.length} secret{sourceSecretKeys.length === 1 ? '' : 's'}</b> will be restored from the backup.
+								{:else}
+									Its <b>{sourceSecretKeys.length} secret{sourceSecretKeys.length === 1 ? '' : 's'}</b> will <b>not</b> be restored — set {sourceSecretKeys.length === 1 ? 'it' : 'them'} by hand afterwards.
+								{/if}
+							</p>
 						{/if}
 						{#if hasRemap}
 							<!-- The recreate/redeploy uses the snapshot's STORED config/compose, which

@@ -21,6 +21,10 @@ export const POST: RequestHandler = async (event) => {
 	const postRestore = ['start', 'recreate', 'redeploy', 'none'].includes(body.postRestore) ? body.postRestore : undefined;
 	// New-location clone: per-volume destinations on the target env.
 	const volumeDestinations = Array.isArray(body.volumeDestinations) ? body.volumeDestinations : undefined;
+	// Stack restore: reproduce the stack's secrets carried in the snapshot (default on).
+	// The client sends false to bring the stack up without them. Only a stack redeploy
+	// consumes this; container restores ignore it.
+	const restoreSecrets = body.restoreSecrets !== false;
 
 	// Authorization gates run BEFORE request validation, so an unauthorized caller
 	// never learns anything about the request shape.
@@ -71,6 +75,7 @@ export const POST: RequestHandler = async (event) => {
 				targetName: body.targetName ?? null,
 				postRestore,
 				volumeDestinations,
+				restoreSecrets,
 			},
 			access,
 			// Stream progress to the client (the restore modal's log). Without this the

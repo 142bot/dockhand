@@ -81,7 +81,7 @@ import {
 } from './db/drizzle.js';
 
 import type { AllGridPreferences, GridId, GridColumnPreferences } from '$lib/types';
-import { encrypt, decrypt, decryptStrict } from './encryption.js';
+import { encrypt, decrypt, decryptStrict, isEncrypted } from './encryption.js';
 import { parseEnvInterpolation } from './env-interpolation';
 import { invalidateVulnerabilitiesCache } from './vulnerabilities-cache';
 
@@ -4997,6 +4997,40 @@ export async function getSecretEnvVarsAsRecord(
 	return Object.fromEntries(
 		vars.filter(v => v.isSecret).map(v => [v.key, v.value])
 	);
+}
+
+/**
+ * Get a stack's SECRET env vars as their RAW at-rest ciphertext (enc:v1:...), keyed
+ * by name. Unlike the *AsRecord helpers this does NOT decrypt: it returns the exact
+ * bytes stored in the DB. Used by backup to carry secrets in a snapshot still
+ * encrypted under this instance's key — never plaintext. A value that is somehow
+ * stored plaintext (legacy) is encrypted here so a snapshot never holds a bare secret.
+ */
+export async function getStackSecretCiphertexts(
+	stackName: string,
+	environmentId?: number | null
+): Promise<Array<{ key: string; value: string }>> {
+	let rows;
+	if (environmentId === undefined) {
+		rows = await db.select().from(stackEnvironmentVariables)
+			.where(eq(stackEnvironmentVariables.stackName, stackName));
+	} else if (environmentId === null) {
+		rows = await db.select().from(stackEnvironmentVariables)
+			.where(and(
+				eq(stackEnvironmentVariables.stackName, stackName),
+				isNull(stackEnvironmentVariables.environmentId)
+			));
+	} else {
+		rows = await db.select().from(stackEnvironmentVariables)
+			.where(and(
+				eq(stackEnvironmentVariables.stackName, stackName),
+				eq(stackEnvironmentVariables.environmentId, environmentId)
+			));
+	}
+	return rows
+		.filter((r: typeof rows[number]) => r.isSecret && r.value)
+		.map((r: typeof rows[number]) => ({ key: r.key, value: isEncrypted(r.value) ? r.value : (encrypt(r.value) ?? '') }))
+		.filter((r: { key: string; value: string }) => r.value);
 }
 
 /**

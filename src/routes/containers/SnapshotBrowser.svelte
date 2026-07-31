@@ -2,13 +2,14 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Badge } from '$lib/components/ui/badge';
 	import {
-		FolderOpen, Box, Layers, Network, Loader2, HardDrive, Tag, Variable,
-		Plug, HeartPulse, ScrollText, ShieldAlert, Server, Globe, Cpu, FileText
+		FolderOpen, Box, Layers, Network, HardDrive, Tag, Variable,
+		Plug, HeartPulse, ScrollText, ShieldAlert, Server, Globe, Cpu, FileText, KeyRound
 	} from 'lucide-svelte';
+	import { LoadingState } from '$lib/components/ui/loading-state';
 	import MountTypeBadge from '$lib/components/MountTypeBadge.svelte';
 	import { getRepoTypeIcon } from '$lib/utils/backup';
 	import { formatBytes } from '$lib/utils/format';
-	import { formatDateTime } from '$lib/stores/settings';
+	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { environments } from '$lib/stores/environment';
 	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
 	import FileBrowserPanel from './FileBrowserPanel.svelte';
@@ -102,7 +103,7 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="max-w-4xl h-[90vh] sm:h-[80vh] flex flex-col overflow-hidden">
+	<Dialog.Content class="max-w-6xl h-[90vh] sm:h-[85vh] flex flex-col overflow-hidden">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2 flex-wrap">
 				<FolderOpen class="w-5 h-5" />
@@ -129,7 +130,7 @@
 			</Dialog.Title>
 			<Dialog.Description class="flex items-center gap-2 text-xs text-muted-foreground">
 				{#if snapshotId}<Badge variant="outline" class="font-mono text-[10px]">{String(snapshotId).slice(0, 8)}</Badge>{/if}
-				{#if snapshotTime}{formatDateTime(snapshotTime)}{/if}
+				{#if snapshotTime}{formatDateTime(snapshotTime)} <span class="opacity-60">({formatRelativeTime(snapshotTime)})</span>{/if}
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -169,7 +170,7 @@
 		{#if activeTab === 'metadata'}
 			<div class="flex-1 overflow-y-auto py-3">
 				{#if metadataLoading}
-					<div class="flex items-center justify-center py-8"><Loader2 class="w-5 h-5 animate-spin text-muted-foreground" /></div>
+					<LoadingState class="h-full" label="Loading metadata..." />
 				{:else if metadataError}
 					<p class="text-sm text-muted-foreground p-4">{metadataError}</p>
 				{:else if metadata}
@@ -186,14 +187,14 @@
 								<dd>{formatDateTime(metadata.backupTime)}</dd>
 								{#if metadata.environmentId != null}
 									<dt class="text-muted-foreground">Environment ID</dt>
-									<dd class="font-mono text-xs">{metadata.environmentId}</dd>
+									<dd class="font-mono">{metadata.environmentId}</dd>
 								{/if}
 								<dt class="text-muted-foreground">Volumes</dt>
 								<dd>{metadata.volumes?.length ?? 0}</dd>
 								{#if metadata.type === 'stack'}
 									{#if metadata.composeFileName}
 										<dt class="text-muted-foreground">Compose file</dt>
-										<dd class="font-mono text-xs">{metadata.composeFileName}</dd>
+										<dd class="font-mono">{metadata.composeFileName}</dd>
 									{/if}
 									<dt class="text-muted-foreground">Stack files</dt>
 									<dd>{metadata.hasStackFiles ? (metadata.stackFilesTruncated ? 'captured (truncated)' : 'captured') : 'not captured'}</dd>
@@ -248,6 +249,21 @@
 							</section>
 						{/if}
 
+						<!-- Secrets carried in the snapshot (KEY NAMES only — the values are
+						     stored encrypted and never exposed here). Restored to the target
+						     DB on restore unless the user opts out. -->
+						{#if metadata.type === 'stack' && metadata.secretKeys?.length}
+							<section class="space-y-2 border-t pt-4">
+								<h4 class="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5"><KeyRound class="w-3.5 h-3.5" />Secrets ({metadata.secretKeys.length})</h4>
+								<div class="flex flex-wrap gap-1">
+									{#each metadata.secretKeys as key}
+										<code class="rounded bg-muted px-1.5 py-0.5 text-xs">{key}</code>
+									{/each}
+								</div>
+								<p class="text-xs text-muted-foreground">Stored encrypted with this instance's key. Restored to the stack on restore (values never shown).</p>
+							</section>
+						{/if}
+
 						<!-- Container config (docker inspect, PascalCase, singular). Only for
 						     container targets — stacks have no metadata.container. -->
 						{#if containerInspect?.Config}
@@ -258,50 +274,50 @@
 								</h4>
 								<dl class="grid grid-cols-[130px_1fr] gap-y-1.5 text-sm">
 									<dt class="text-muted-foreground">Image</dt>
-									<dd class="font-mono text-xs break-all">{containerInspect.Config.Image || '—'}</dd>
+									<dd class="font-mono break-all">{containerInspect.Config.Image || '—'}</dd>
 									{#if containerInspect.Id}
 										<dt class="text-muted-foreground">Container ID</dt>
-										<dd class="font-mono text-xs">{containerInspect.Id.slice(0, 12)}</dd>
+										<dd class="font-mono">{containerInspect.Id.slice(0, 12)}</dd>
 									{/if}
 									{#if containerInspect.State?.Status}
 										<dt class="text-muted-foreground">State at backup</dt>
-										<dd class="text-xs">{containerInspect.State.Status}</dd>
+										<dd>{containerInspect.State.Status}</dd>
 									{/if}
 									{#if containerInspect.Created}
 										<dt class="text-muted-foreground">Created</dt>
-										<dd class="text-xs">{formatDateTime(containerInspect.Created)}</dd>
+										<dd>{formatDateTime(containerInspect.Created)}</dd>
 									{/if}
 									{#if containerInspect.Config.Cmd?.length}
 										<dt class="text-muted-foreground">Command</dt>
-										<dd class="font-mono text-xs break-all">{containerInspect.Config.Cmd.join(' ')}</dd>
+										<dd class="font-mono break-all">{containerInspect.Config.Cmd.join(' ')}</dd>
 									{/if}
 									{#if containerInspect.Config.Entrypoint?.length}
 										<dt class="text-muted-foreground">Entrypoint</dt>
-										<dd class="font-mono text-xs break-all">{containerInspect.Config.Entrypoint.join(' ')}</dd>
+										<dd class="font-mono break-all">{containerInspect.Config.Entrypoint.join(' ')}</dd>
 									{/if}
 									{#if containerInspect.Config.WorkingDir}
 										<dt class="text-muted-foreground">Working dir</dt>
-										<dd class="font-mono text-xs break-all">{containerInspect.Config.WorkingDir}</dd>
+										<dd class="font-mono break-all">{containerInspect.Config.WorkingDir}</dd>
 									{/if}
 									{#if containerInspect.Config.User}
 										<dt class="text-muted-foreground">User</dt>
-										<dd class="font-mono text-xs">{containerInspect.Config.User}</dd>
+										<dd class="font-mono">{containerInspect.Config.User}</dd>
 									{/if}
 									{#if containerInspect.Config.ExposedPorts}
 										<dt class="text-muted-foreground">Exposed ports</dt>
-										<dd class="text-xs break-all">{Object.keys(containerInspect.Config.ExposedPorts).join(', ')}</dd>
+										<dd class="break-all">{Object.keys(containerInspect.Config.ExposedPorts).join(', ')}</dd>
 									{/if}
 									{#if containerInspect.HostConfig?.RestartPolicy?.Name}
 										<dt class="text-muted-foreground">Restart policy</dt>
-										<dd class="text-xs">{containerInspect.HostConfig.RestartPolicy.Name}{containerInspect.HostConfig.RestartPolicy.MaximumRetryCount ? ` (max ${containerInspect.HostConfig.RestartPolicy.MaximumRetryCount})` : ''}</dd>
+										<dd>{containerInspect.HostConfig.RestartPolicy.Name}{containerInspect.HostConfig.RestartPolicy.MaximumRetryCount ? ` (max ${containerInspect.HostConfig.RestartPolicy.MaximumRetryCount})` : ''}</dd>
 									{/if}
 									{#if containerInspect.HostConfig?.NetworkMode}
 										<dt class="text-muted-foreground">Network mode</dt>
-										<dd class="text-xs break-all">{containerInspect.HostConfig.NetworkMode}</dd>
+										<dd class="break-all">{containerInspect.HostConfig.NetworkMode}</dd>
 									{/if}
 									{#if containerInspect.HostConfig?.Privileged}
 										<dt class="text-muted-foreground">Privileged</dt>
-										<dd class="text-xs">yes</dd>
+										<dd>yes</dd>
 									{/if}
 								</dl>
 
@@ -347,15 +363,15 @@
 										<dl class="grid grid-cols-[130px_1fr] gap-y-1 text-sm">
 											{#if containerInspect.HostConfig?.LogConfig?.Type}
 												<dt class="text-muted-foreground flex items-center gap-1.5"><ScrollText class="w-3.5 h-3.5" />Log driver</dt>
-												<dd class="font-mono text-xs">{containerInspect.HostConfig.LogConfig.Type}</dd>
+												<dd class="font-mono">{containerInspect.HostConfig.LogConfig.Type}</dd>
 											{/if}
 											{#if containerInspect.Config?.StopSignal}
 												<dt class="text-muted-foreground">Stop signal</dt>
-												<dd class="font-mono text-xs">{containerInspect.Config.StopSignal}</dd>
+												<dd class="font-mono">{containerInspect.Config.StopSignal}</dd>
 											{/if}
 											{#if containerInspect.Platform}
 												<dt class="text-muted-foreground flex items-center gap-1.5"><Cpu class="w-3.5 h-3.5" />Platform</dt>
-												<dd class="font-mono text-xs">{containerInspect.Platform}</dd>
+												<dd class="font-mono">{containerInspect.Platform}</dd>
 											{/if}
 										</dl>
 									</div>
