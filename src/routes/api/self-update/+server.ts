@@ -5,6 +5,7 @@ import {
 	getOwnContainerId,
 	getHostDockerSocket,
 	getOwnDockerHost,
+	getAutoDetectedDockerHost,
 	getOwnExtraHosts,
 	getOwnNetworkMode
 } from '$lib/server/host-path';
@@ -17,7 +18,7 @@ const UPDATER_LABEL = 'dockhand.updater';
 
 /** Get TCP Docker host if configured, null otherwise. */
 function getDockerTcpHost(): string | null {
-	const dockerHost = process.env.DOCKER_HOST || getOwnDockerHost();
+	const dockerHost = process.env.DOCKER_HOST || getOwnDockerHost() || getAutoDetectedDockerHost();
 	return dockerHost?.startsWith('tcp://') ? dockerHost : null;
 }
 

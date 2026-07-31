@@ -1,13 +1,59 @@
 import { json } from '@sveltejs/kit';
+import { existsSync } from 'node:fs';
 import { authorize } from '$lib/server/authorize';
-import { getOwnContainerId, getOwnDockerHost } from '$lib/server/host-path';
-import { getRegistryManifestDigest, unixSocketRequest } from '$lib/server/docker';
+import { getOwnContainerId, getOwnDockerHost, getAutoDetectedDockerHost } from '$lib/server/host-path';
+import { getRegistryManifestDigest, unixSocketRequest, dockerFetch } from '$lib/server/docker';
+import { getEnvironments } from '$lib/server/db';
 import { compareVersions } from '$lib/utils/version';
 import type { RequestHandler } from './$types';
 
-/** Fetch from the local Docker directly (not through environment routing) */
-function localDockerFetch(path: string, options: RequestInit = {}): Promise<Response> {
-	const dockerHost = process.env.DOCKER_HOST || getOwnDockerHost();
+/**
+ * When there is no local socket and no DOCKER_HOST (e.g. a socket-proxy setup
+ * that mounts no docker.sock, #1203), find the environment whose daemon actually
+ * runs the Dockhand container by inspecting our own container ID on each
+ * candidate. This is deterministic even with several `direct` envs, one of which
+ * is a genuinely remote host - the remote daemon returns 404 for our ID, so we
+ * never pick it. Memoized: the answer is stable for the process lifetime.
+ * Returns the env id, or null if none host us.
+ */
+let ownEnvIdMemo: number | null | undefined;
+async function resolveOwnEnvId(containerId: string): Promise<number | null> {
+	if (ownEnvIdMemo !== undefined) return ownEnvIdMemo;
+
+	const envs = await getEnvironments();
+	// Socket/local envs first (cheapest, almost always us), then direct.
+	const candidates = [
+		...envs.filter((e) => e.connectionType === 'socket' || !e.connectionType),
+		...envs.filter((e) => e.connectionType === 'direct')
+	];
+	for (const env of candidates) {
+		try {
+			const res = await dockerFetch(`/containers/${containerId}/json`, {}, env.id);
+			if (res.ok) {
+				console.log(`[SelfUpdate] Dockhand runs on environment "${env.name}" (id ${env.id}, ${env.connectionType || 'socket'}); using it for update checks`);
+				ownEnvIdMemo = env.id;
+				return env.id;
+			}
+		} catch {
+			// Env unreachable or does not host us; try the next candidate.
+		}
+	}
+	console.log('[SelfUpdate] No configured environment hosts the Dockhand container; cannot reach Docker for update check');
+	ownEnvIdMemo = null;
+	return null;
+}
+
+/**
+ * Fetch from the Docker daemon running Dockhand itself (not via env routing,
+ * which fails on private-registry images - see the private-registry fix).
+ *
+ * Order: explicit DOCKER_HOST tcp -> local socket if present -> the environment
+ * that actually hosts our own container. The last path covers socket-proxy
+ * setups with no docker.sock mount and no DOCKER_HOST (#1203), so the user does
+ * not have to set DOCKER_HOST (which breaks scanner networking, #1204).
+ */
+async function localDockerFetch(path: string, options: RequestInit = {}): Promise<Response> {
+	const dockerHost = process.env.DOCKER_HOST || getOwnDockerHost() || getAutoDetectedDockerHost();
 
 	if (dockerHost?.startsWith('tcp://')) {
 		// TCP connection (socat proxy, socket-proxy, remote Docker)
@@ -15,8 +61,21 @@ function localDockerFetch(path: string, options: RequestInit = {}): Promise<Resp
 		return fetch(url, options);
 	}
 
-	// Unix socket (default)
 	const socketPath = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
+	if (existsSync(socketPath)) {
+		return unixSocketRequest(socketPath, path, options);
+	}
+
+	const containerId = getOwnContainerId();
+	if (containerId) {
+		const ownEnvId = await resolveOwnEnvId(containerId);
+		if (ownEnvId !== null) {
+			return dockerFetch(path, options, ownEnvId);
+		}
+	}
+
+	// Nothing usable: fall through to the socket path so the caller gets the
+	// original ENOENT rather than a silent success.
 	return unixSocketRequest(socketPath, path, options);
 }
 

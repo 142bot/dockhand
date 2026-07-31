@@ -9,6 +9,7 @@ import { getStacksDir } from '$lib/server/stacks';
 import { authorize } from '$lib/server/authorize';
 import { auditEnvironment } from '$lib/server/audit';
 import { refreshSubprocessEnvironments } from '$lib/server/subprocess-manager';
+import { resetHostDetection, detectHostDataDir } from '$lib/server/host-path';
 import { serializeLabels, parseLabels, MAX_LABELS } from '$lib/utils/label-colors';
 import { cleanPem } from '$lib/utils/pem';
 import { validateEnvName } from '$lib/utils/env-name';
@@ -154,6 +155,11 @@ export const PUT: RequestHandler = async (event) => {
 		if (!env) {
 			return json({ error: 'Environment not found' }, { status: 404 });
 		}
+
+		// Re-run host detection: editing an env (e.g. pointing it at a socket proxy)
+		// lets a socketless deployment reach Docker without a restart (#1203).
+		resetHostDetection();
+		void detectHostDataDir();
 
 		// Notify event collectors if collectActivity or collectMetrics setting changed
 		if (data.collectActivity !== undefined || data.collectMetrics !== undefined) {

@@ -22,6 +22,7 @@
 import { readFileSync } from 'node:fs';
 import * as http from 'node:http';
 import { resolve } from 'node:path';
+import { isSelfInspectCandidate } from './host-path-core';
 
 // Cache the host data dir to avoid repeated API calls
 let cachedHostDataDir: string | null = null;
@@ -30,9 +31,16 @@ let detectionAttempted = false;
 // Cache ALL mounts for path translation (not just DATA_DIR)
 let cachedMounts: Array<{ source: string; destination: string }> | null = null;
 
-// Cache Dockhand's own Docker access method (detected from container inspect)
-// Used by scanner to replicate how Dockhand connects to Docker
+// Cache Dockhand's own Docker access method (detected from container inspect).
+// cachedOwnDockerHost holds ONLY a DOCKER_HOST the user set on Dockhand's own
+// container. The scanner reads it to replicate how Dockhand reaches Docker, so it
+// must stay exactly what 1.0.39 exposed: null unless the user set DOCKER_HOST.
 let cachedOwnDockerHost: string | null = null;
+// cachedAutoTcpHost holds a tcp:// address DISCOVERED via a DB env (#1203, socket-
+// proxy with no docker.sock and no DOCKER_HOST). It's for self-update ONLY - the
+// scanner must NOT follow it, or it flips into TCP-mode and joins the wrong network
+// on split-network hosts (#1204). Kept separate from cachedOwnDockerHost for that.
+let cachedAutoTcpHost: string | null = null;
 let cachedOwnNetworkMode: string | null = null;
 let cachedOwnAllNetworks: string[] | null = null;
 let cachedOwnExtraHosts: string[] | null = null;
@@ -71,6 +79,141 @@ export function getOwnContainerId(): string | null {
 	}
 
 	return null;
+}
+
+/** Docker container inspect fields we read to populate the caches. */
+interface OwnContainerInfo {
+	Mounts?: Array<{ Type?: string; Source: string; Destination: string }>;
+	Config?: { Env?: string[] };
+	HostConfig?: { ExtraHosts?: string[] };
+	NetworkSettings?: { Networks?: Record<string, unknown> };
+}
+
+/**
+ * Populate the mounts / DOCKER_HOST / network / ExtraHosts caches from a
+ * container inspect result. Shared by the socket self-inspect and the DB-env
+ * fallback so both paths cache identically. `ownDockerHostOverride` sets
+ * cachedAutoTcpHost (self-update ONLY) when the inspect was reached over a DB env
+ * TCP route; the socket path instead reads a real DOCKER_HOST from the container's
+ * own env vars into cachedOwnDockerHost (which the scanner honors).
+ */
+function populateCachesFromInspect(info: OwnContainerInfo, ownDockerHostOverride?: string): void {
+	cachedMounts = (info.Mounts || []).map(m => ({ source: m.Source, destination: m.Destination }));
+	console.log(`[HostPath] Cached ${cachedMounts.length} mount(s)`);
+
+	if (ownDockerHostOverride) {
+		// Discovered via a DB env (#1203). Self-update may use it, but the scanner
+		// must NOT (it would flip to TCP-mode and hit the wrong net, #1204), so this
+		// goes to the self-update-only cache, never cachedOwnDockerHost.
+		cachedAutoTcpHost = ownDockerHostOverride;
+	} else {
+		// Read DOCKER_HOST from Dockhand's own env vars (how it was configured).
+		for (const v of info.Config?.Env || []) {
+			if (v.startsWith('DOCKER_HOST=')) {
+				cachedOwnDockerHost = v.substring('DOCKER_HOST='.length);
+				console.log(`[HostPath] Detected own DOCKER_HOST: ${cachedOwnDockerHost}`);
+				break;
+			}
+		}
+	}
+
+	// Networks: primary (custom net first, else bridge) + full list, so callers
+	// can warn on fragile split-network setups (#1011).
+	const networks = info.NetworkSettings?.Networks;
+	if (networks) {
+		const custom = Object.keys(networks).filter(n => n !== 'bridge' && n !== 'none' && n !== 'host');
+		cachedOwnNetworkMode = custom.length > 0 ? custom[0] : networks.bridge ? 'bridge' : null;
+		cachedOwnAllNetworks = Object.keys(networks);
+		if (cachedOwnNetworkMode) {
+			console.log(`[HostPath] Detected own network: ${cachedOwnNetworkMode} (all: ${cachedOwnAllNetworks.join(', ')})`);
+		}
+	}
+
+	cachedOwnExtraHosts = info.HostConfig?.ExtraHosts?.length ? [...info.HostConfig.ExtraHosts] : null;
+	if (cachedOwnExtraHosts) {
+		console.log(`[HostPath] Detected own ExtraHosts: ${cachedOwnExtraHosts.join(', ')}`);
+	}
+}
+
+/**
+ * Resolve the host path for DATA_DIR from a container inspect result: honor an
+ * explicit HOST_DATA_DIR override, else match the DATA_DIR mount (or a parent
+ * mount). Sets and returns cachedHostDataDir, or null if no mount matches.
+ */
+function resolveDataDirFromInspect(info: OwnContainerInfo, dataDir: string): string | null {
+	if (cachedHostDataDir) return cachedHostDataDir;
+
+	const dataMount = info.Mounts?.find(m => m.Destination === dataDir);
+	if (dataMount) {
+		cachedHostDataDir = dataMount.Source;
+		console.log(`[HostPath] Detected host path for ${dataDir}: ${cachedHostDataDir}`);
+		return cachedHostDataDir;
+	}
+	for (const mount of info.Mounts || []) {
+		if (dataDir.startsWith(mount.Destination + '/') || dataDir === mount.Destination) {
+			cachedHostDataDir = mount.Source + dataDir.substring(mount.Destination.length);
+			console.log(`[HostPath] Detected host path for ${dataDir} via parent mount: ${cachedHostDataDir}`);
+			return cachedHostDataDir;
+		}
+	}
+	console.warn(`[HostPath] Could not find mount for ${dataDir} in container mounts`);
+	return null;
+}
+
+/**
+ * Fallback for socket-proxy deployments (#1203/#1204): no docker.sock mounted and
+ * no DOCKER_HOST set, so the socket self-inspect above failed. Reach Docker
+ * through a DB-configured plain-http `direct` environment whose daemon actually
+ * hosts THIS container (a genuinely remote daemon 404s on our id and is skipped),
+ * and cache its tcp:// address + network so scanner/self-update sidecars work.
+ * Returns the resolved DATA_DIR host path, or null if no env hosts us.
+ */
+async function inspectOwnContainerViaDbEnv(containerId: string, dataDir: string): Promise<string | null> {
+	// Lazy import: keep host-path.ts light at module load so it stays importable
+	// in unit tests without pulling in the DB/docker layers (better-sqlite3).
+	const { getEnvironments } = await import('./db');
+	const { dockerFetch } = await import('./docker');
+
+	let envs;
+	try {
+		envs = await getEnvironments();
+	} catch {
+		return null;
+	}
+	const candidates = envs.filter(isSelfInspectCandidate);
+	for (const env of candidates) {
+		try {
+			const res = await dockerFetch(`/containers/${containerId}/json`, {}, env.id);
+			if (!res.ok) {
+				await res.body?.cancel().catch(() => {});
+				continue;
+			}
+			const info = await res.json() as OwnContainerInfo;
+			const tcpHost = `tcp://${env.host}:${env.port}`;
+			populateCachesFromInspect(info, tcpHost);
+			console.log(`[HostPath] Reached own container via direct env "${env.name}"; own DOCKER_HOST=${tcpHost}`);
+			return resolveDataDirFromInspect(info, dataDir);
+		} catch {
+			continue;
+		}
+	}
+	return null;
+}
+
+/**
+ * Reset host detection so the next detectHostDataDir() re-inspects. Called when
+ * environments change (create/update), so a socket-proxy deployment that had no
+ * `direct` env at boot picks one up without a restart (#1203).
+ */
+export function resetHostDetection(): void {
+	detectionAttempted = false;
+	cachedHostDataDir = null;
+	cachedMounts = null;
+	cachedOwnDockerHost = null;
+	cachedAutoTcpHost = null;
+	cachedOwnNetworkMode = null;
+	cachedOwnAllNetworks = null;
+	cachedOwnExtraHosts = null;
 }
 
 /**
@@ -149,77 +292,23 @@ export async function detectHostDataDir(): Promise<string | null> {
 			};
 		};
 
-		// Cache ALL mounts for later path translation (used by rewriteComposeVolumePaths)
-		cachedMounts = (containerInfo.Mounts || []).map(m => ({
-			source: m.Source,
-			destination: m.Destination
-		}));
-		console.log(`[HostPath] Cached ${cachedMounts.length} mount(s)`);
-
-		// Cache DOCKER_HOST from Dockhand's own env vars (if set)
-		// This tells us how Dockhand was configured to reach Docker
-		const envVars = containerInfo.Config?.Env || [];
-		for (const v of envVars) {
-			if (v.startsWith('DOCKER_HOST=')) {
-				cachedOwnDockerHost = v.substring('DOCKER_HOST='.length);
-				console.log(`[HostPath] Detected own DOCKER_HOST: ${cachedOwnDockerHost}`);
-				break;
-			}
-		}
-
-		// Cache Dockhand's networks. Picks one as the primary networkMode
-		// (custom net first, falling back to bridge) and keeps the full list
-		// so callers can warn when a setup is fragile — e.g. socket-proxy
-		// living on a network other than the one the scanner joins (#1011).
-		const networks = containerInfo.NetworkSettings?.Networks;
-		if (networks) {
-			const custom = Object.keys(networks).filter(
-				n => n !== 'bridge' && n !== 'none' && n !== 'host'
-			);
-			cachedOwnNetworkMode = custom.length > 0 ? custom[0]
-				: networks.bridge ? 'bridge' : null;
-			cachedOwnAllNetworks = Object.keys(networks);
-			if (cachedOwnNetworkMode) {
-				console.log(`[HostPath] Detected own network: ${cachedOwnNetworkMode} (all: ${cachedOwnAllNetworks.join(', ')})`);
-			}
-		}
-
-		cachedOwnExtraHosts = containerInfo.HostConfig?.ExtraHosts?.length
-			? [...containerInfo.HostConfig.ExtraHosts]
-			: null;
-		if (cachedOwnExtraHosts) {
-			console.log(`[HostPath] Detected own ExtraHosts: ${cachedOwnExtraHosts.join(', ')}`);
-		}
-
-		// Explicit override wins for DATA_DIR path, but we still inspect to populate
-		// mounts/network/DOCKER_HOST/ExtraHosts caches for sibling sidecars.
-		if (cachedHostDataDir) {
-			return cachedHostDataDir;
-		}
-
-		// Find the mount for our DATA_DIR
-		const dataMount = containerInfo.Mounts?.find(m => m.Destination === dataDir);
-
-		if (dataMount) {
-			cachedHostDataDir = dataMount.Source;
-			console.log(`[HostPath] Detected host path for ${dataDir}: ${cachedHostDataDir}`);
-			return cachedHostDataDir;
-		}
-
-		// Check if DATA_DIR is a subdirectory of a mount
-		for (const mount of containerInfo.Mounts || []) {
-			if (dataDir.startsWith(mount.Destination + '/') || dataDir === mount.Destination) {
-				const relativePath = dataDir.substring(mount.Destination.length);
-				cachedHostDataDir = mount.Source + relativePath;
-				console.log(`[HostPath] Detected host path for ${dataDir} via parent mount: ${cachedHostDataDir}`);
-				return cachedHostDataDir;
-			}
-		}
-
-		console.warn(`[HostPath] Could not find mount for ${dataDir} in container mounts`);
-		return null;
+		// Populate mounts/DOCKER_HOST/network/ExtraHosts caches (from the container's
+		// own env vars, since this path reached Docker over socket/DOCKER_HOST).
+		populateCachesFromInspect(containerInfo);
+		return resolveDataDirFromInspect(containerInfo, dataDir);
 	} catch (err) {
-		console.warn(`[HostPath] Failed to query Docker API: ${err}`);
+		console.warn(`[HostPath] Failed to query Docker API via socket/DOCKER_HOST: ${err}`);
+		// Socket-proxy fallback (#1203/#1204): no docker.sock and no DOCKER_HOST, so
+		// reach Docker through a configured plain-http direct env. Guarded on no
+		// DOCKER_HOST so a user who set an (unreachable) DOCKER_HOST is never rerouted.
+		if (!process.env.DOCKER_HOST) {
+			const viaEnv = await inspectOwnContainerViaDbEnv(containerId, dataDir);
+			if (viaEnv) return viaEnv;
+		}
+		// Nothing found. Do NOT keep detectionAttempted latched: a direct env added
+		// AFTER startup should heal on the next detect without a restart. Only a
+		// successful detection (above / socket path) leaves the caches populated.
+		detectionAttempted = false;
 		return null;
 	}
 }
@@ -238,6 +327,15 @@ export function getHostDataDir(): string | null {
  */
 export function getOwnDockerHost(): string | null {
 	return cachedOwnDockerHost;
+}
+
+/**
+ * TCP address discovered via a DB env when Dockhand has no docker.sock and no
+ * DOCKER_HOST (#1203 socket-proxy). For self-update ONLY - the scanner deliberately
+ * does not read this, so it keeps using the host socket like 1.0.39 did (#1204).
+ */
+export function getAutoDetectedDockerHost(): string | null {
+	return cachedAutoTcpHost;
 }
 
 /**

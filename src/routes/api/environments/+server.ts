@@ -5,6 +5,7 @@ import { authorize } from '$lib/server/authorize';
 import { auditEnvironment } from '$lib/server/audit';
 import { invalidateTokenCacheForUser } from '$lib/server/api-tokens';
 import { refreshSubprocessEnvironments } from '$lib/server/subprocess-manager';
+import { resetHostDetection, detectHostDataDir } from '$lib/server/host-path';
 import { serializeLabels, parseLabels, MAX_LABELS } from '$lib/utils/label-colors';
 import { cleanPem } from '$lib/utils/pem';
 import { validateEnvName } from '$lib/utils/env-name';
@@ -124,6 +125,11 @@ export const POST: RequestHandler = async (event) => {
 
 		// Notify event collectors to pick up the new environment
 		refreshSubprocessEnvironments();
+
+		// Re-run host detection: a socket-proxy deployment with no direct env at boot
+		// can now reach Docker through this env without a restart (#1203). Fire-and-forget.
+		resetHostDetection();
+		void detectHostDataDir();
 
 		// Auto-assign Admin role to creator (Enterprise only)
 		if (auth.isEnterprise && auth.authEnabled && auth.isAuthenticated && !auth.isAdmin) {
