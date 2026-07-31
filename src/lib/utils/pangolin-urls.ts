@@ -7,8 +7,15 @@
  *
  *   pangolin.public-resources.<name>.name          human-friendly label
  *   pangolin.public-resources.<name>.full-domain   public hostname (mandatory)
- *   pangolin.public-resources.<name>.protocol      http | https (defaults to https)
- *   pangolin.private-resources.<name>.{name,full-domain,protocol}   private equivalents
+ *   pangolin.public-resources.<name>.ssl           true | false — picks https|http
+ *   pangolin.private-resources.<name>.{name,full-domain,ssl}   private equivalents
+ *
+ * SCHEME comes from `ssl` ONLY (verified against Pangolin's source):
+ *   - ssl=true  -> https,  ssl=false -> http
+ *   - ssl absent -> scope default: PUBLIC = https (Pangolin forces ssl=true when
+ *     unset), PRIVATE = http (the ssl DB column defaults to false).
+ * The `protocol`/`mode` label is the resource TYPE (http/tcp/udp/...), NOT the URL
+ * scheme (Pangolin doesn't accept `protocol=https`), so it is deliberately ignored.
  *
  * Both scopes resolve to a URL the user can click. The scope (`public`/
  * `private`) is preserved on the result so callers can label or filter.
@@ -37,8 +44,21 @@ export interface PangolinUrl {
 	displayName?: string;
 }
 
+// The URL scheme is decided by the `ssl` label ONLY. `protocol`/`mode` is the
+// resource TYPE (http/tcp/udp/...), never the scheme — Pangolin doesn't even accept
+// `protocol=https`. We still capture `name` for the display label; `full-domain` is
+// mandatory for a URL to exist.
 const RESOURCE_KEY_RE =
-	/^pangolin\.(public|private)-resources\.([^.]+)\.(full-domain|protocol|name)$/;
+	/^pangolin\.(public|private)-resources\.([^.]+)\.(full-domain|ssl|name)$/;
+
+/** Parse a Pangolin boolean label ("true"/"false", case-insensitive). Anything
+ *  else (incl. absent) yields undefined so the scope default applies. */
+function parseSsl(v: string): boolean | undefined {
+	const s = v.toLowerCase();
+	if (s === 'true') return true;
+	if (s === 'false') return false;
+	return undefined;
+}
 
 export function extractPangolinUrls(
 	labels: Record<string, string> | undefined | null
@@ -50,7 +70,7 @@ export function extractPangolinUrls(
 	// they're treated as independent resources here.
 	const byResource = new Map<
 		string,
-		{ scope: 'public' | 'private'; resource: string; fullDomain?: string; protocol?: string; name?: string }
+		{ scope: 'public' | 'private'; resource: string; fullDomain?: string; ssl?: boolean; name?: string }
 	>();
 
 	for (const [key, value] of Object.entries(labels)) {
@@ -66,7 +86,7 @@ export function extractPangolinUrls(
 		const v = (value ?? '').trim();
 		if (!v) continue;
 		if (field === 'full-domain') entry.fullDomain = v;
-		else if (field === 'protocol') entry.protocol = v.toLowerCase();
+		else if (field === 'ssl') entry.ssl = parseSsl(v);
 		else if (field === 'name') entry.name = v;
 	}
 
@@ -76,10 +96,12 @@ export function extractPangolinUrls(
 	for (const entry of byResource.values()) {
 		if (!entry.fullDomain) continue;
 
-		const proto =
-			entry.protocol === 'http' || entry.protocol === 'https'
-				? entry.protocol
-				: 'https';
+		// Scheme resolution mirrors Pangolin's source exactly:
+		//   ssl present  -> ssl ? https : http
+		//   ssl absent   -> scope default: public = https (code forces true),
+		//                    private = http (DB column default false).
+		const ssl = entry.ssl ?? (entry.scope === 'public');
+		const proto = ssl ? 'https' : 'http';
 
 		const url = `${proto}://${entry.fullDomain}`;
 		if (seen.has(url)) continue;
