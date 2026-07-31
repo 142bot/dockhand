@@ -1,5 +1,68 @@
 [
   {
+    "version": "1.0.40",
+    "date": "2026-07-31",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "git stack stop/down/remove now resolve panel environment variables (#1313, PR#1339, @strausmann)"
+      },
+      {
+        "type": "fix",
+        "text": "the header clock falls back to the default TZ instead of UTC when the environment has none (#1340)"
+      },
+      {
+        "type": "fix",
+        "text": "deleting a git stack no longer clears a same-named stack's variables on other environments (#1335)"
+      },
+      {
+        "type": "fix",
+        "text": "Pangolin public URLs now default to https, honoring the ssl label (#1331)"
+      },
+      {
+        "type": "fix",
+        "text": "disconnected environments can be deleted without timeout (#1319, PR#1320, @Solaris-star)"
+      },
+      {
+        "type": "feature",
+        "text": "Git stack source badge shows the deployed short commit hash, and git url, branch in tooltip (PR#1325, @brx19)"
+      },
+      {
+        "type": "fix",
+        "text": "container and stack modals are centered with consistent margins, no longer shifting with the sidebar (#1308)"
+      },
+      {
+        "type": "fix",
+        "text": "git stack webhooks now require a configured secret"
+      },
+      {
+        "type": "fix",
+        "text": "local-path backup repos now work on a co-located socket-proxy env, and fail loudly on a remote host (#1316)"
+      },
+      {
+        "type": "fix",
+        "text": "restoring a stack from a backup no longer drops its database-backed secret env vars (#1329)"
+      },
+      {
+        "type": "fix",
+        "text": "restoring a stack now recreates it as a internal stack in the stacks dir, not from a tmp path"
+      },
+      {
+        "type": "fix",
+        "text": "local-path backups are readable when Dockhand runs with a non-root PUID"
+      },
+      {
+        "type": "fix",
+        "text": "bump docker-compose to 5.3.1-r3 (CVE-2026-56852, GHSA-hrxh-6v49-42gf, GHSA-jpjm-c3r5-q96r)"
+      },
+      {
+        "type": "fix",
+        "text": "self-update check works on socket-proxy setups (#1203)"
+      }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.40"
+  },
+  {
     "version": "1.0.39",
     "date": "2026-07-26",
     "changes": [
