@@ -3,29 +3,7 @@ import type { RequestHandler } from './$types';
 import { getGitRepository } from '$lib/server/db';
 import { deployFromRepository } from '$lib/server/git';
 import { auditGitRepository } from '$lib/server/audit';
-import crypto from 'node:crypto';
-
-function verifySignature(payload: string, signature: string | null, secret: string): boolean {
-	if (!signature) return false;
-
-	// Support both GitHub and GitLab webhook signatures
-	// GitHub: sha256=<hash>
-	// GitLab: just the token value in X-Gitlab-Token header
-
-	if (signature.startsWith('sha256=')) {
-		const expectedSignature = 'sha256=' + crypto
-			.createHmac('sha256', secret)
-			.update(payload)
-			.digest('hex');
-		const sigBuf = Buffer.from(signature);
-		const expectedBuf = Buffer.from(expectedSignature);
-		if (sigBuf.length !== expectedBuf.length) return false;
-		return crypto.timingSafeEqual(sigBuf, expectedBuf);
-	}
-
-	// GitLab uses X-Gitlab-Token which should match exactly
-	return signature === secret;
-}
+import { verifyWebhookSignature } from '$lib/server/webhook-signature';
 
 function detectSource(request: Request): string {
 	if (request.headers.get('x-hub-signature-256')) return 'github';
@@ -52,20 +30,25 @@ export const POST: RequestHandler = async (event) => {
 
 		const source = detectSource(request);
 
-		// Verify webhook secret if set
-		if (repository.webhookSecret) {
-			const payload = await request.text();
-			const githubSignature = request.headers.get('x-hub-signature-256');
-			const gitlabToken = request.headers.get('x-gitlab-token');
+		// A secret is mandatory: reject if none is configured.
+		if (!repository.webhookSecret) {
+			await auditGitRepository(event, 'webhook', id, repository.name, {
+				method: 'POST', source, error: 'no_secret_configured'
+			});
+			return json({ error: 'Webhook secret is not configured for this repository' }, { status: 401 });
+		}
 
-			const signature = githubSignature || gitlabToken;
+		const payload = await request.text();
+		const githubSignature = request.headers.get('x-hub-signature-256');
+		const gitlabToken = request.headers.get('x-gitlab-token');
 
-			if (!verifySignature(payload, signature, repository.webhookSecret)) {
-				await auditGitRepository(event, 'webhook', id, repository.name, {
-					method: 'POST', source, error: 'invalid_signature'
-				});
-				return json({ error: 'Invalid webhook signature' }, { status: 401 });
-			}
+		const signature = githubSignature || gitlabToken;
+
+		if (!verifyWebhookSignature(payload, signature, repository.webhookSecret)) {
+			await auditGitRepository(event, 'webhook', id, repository.name, {
+				method: 'POST', source, error: 'invalid_signature'
+			});
+			return json({ error: 'Invalid webhook signature' }, { status: 401 });
 		}
 
 		// Optionally check which branch was pushed (for GitHub)
@@ -104,9 +87,17 @@ export const GET: RequestHandler = async (event) => {
 			return json({ error: 'Webhook is not enabled for this repository' }, { status: 403 });
 		}
 
+		// A secret is mandatory (see POST handler). Reject if none is configured.
+		if (!repository.webhookSecret) {
+			await auditGitRepository(event, 'webhook', id, repository.name, {
+				method: 'GET', source: 'get', error: 'no_secret_configured'
+			});
+			return json({ error: 'Webhook secret is not configured for this repository' }, { status: 401 });
+		}
+
 		// Verify secret via query parameter for GET requests
 		const secret = url.searchParams.get('secret');
-		if (repository.webhookSecret && secret !== repository.webhookSecret) {
+		if (secret !== repository.webhookSecret) {
 			await auditGitRepository(event, 'webhook', id, repository.name, {
 				method: 'GET', source: 'get', error: 'invalid_secret'
 			});

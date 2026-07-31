@@ -214,7 +214,7 @@ export function isSafeRelPath(p: string): boolean {
 }
 
 /** Resolve relPath inside root; returns null when it would escape root. */
-function containedPath(root: string, relPath: string): string | null {
+export function containedPath(root: string, relPath: string): string | null {
 	if (!isSafeRelPath(relPath)) return null;
 	const abs = resolve(root, relPath);
 	if (abs !== root && abs.startsWith(root + sep)) return abs;

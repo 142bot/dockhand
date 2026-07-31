@@ -68,6 +68,11 @@ export const POST: RequestHandler = async (event) => {
 			return json({ error: 'A stack with this name already exists on this environment' }, { status: 409 });
 		}
 
+		// A secret is mandatory when the webhook is enabled.
+		if (data.webhookEnabled && !data.webhookSecret?.trim()) {
+			return json({ error: 'A webhook secret is required when the webhook is enabled' }, { status: 400 });
+		}
+
 		// Either repositoryId or new repo details (url, branch) must be provided
 		let repositoryId = data.repositoryId;
 

@@ -17,6 +17,7 @@ import {
 import { deployStack, getStackDir } from './stacks';
 import { sendEventNotification } from './notifications';
 import { buildBasicAuthHeader } from './git-auth';
+import { assertSafeRepoUrl, assertSafeGitRef, repoFilePath } from './git-url-safety';
 import {
 	parseManifest,
 	serializeManifest,
@@ -307,6 +308,7 @@ function cleanupSshKey(credential: GitCredential | null): void {
 }
 
 function buildRepoUrl(url: string, credential: GitCredential | null): string {
+	assertSafeRepoUrl(url);
 	// Never embed credentials in the URL — they leak via /proc/<pid>/cmdline (see #1081).
 	// HTTPS credentials are injected via GIT_CONFIG_COUNT env vars in buildGitEnv().
 	// Strip any existing credentials from the URL for safety.
@@ -542,6 +544,7 @@ async function testRepositoryConnection(options: {
 	const { url, branch, credential } = options;
 
 	const env = await buildGitEnv(credential);
+	assertSafeGitRef(branch);
 	const repoUrl = buildRepoUrl(url, credential);
 
 	try {
@@ -675,6 +678,7 @@ export async function syncRepository(repoId: number): Promise<SyncResult> {
 
 		if (!existsSync(repoPath)) {
 			// Clone the repository (blobless clone - fetches all commits but blobs on-demand)
+			assertSafeGitRef(repo.branch);
 			const repoUrl = buildRepoUrl(repo.url, credential);
 
 			const result = await execGit(
@@ -714,7 +718,7 @@ export async function syncRepository(repoId: number): Promise<SyncResult> {
 		currentCommit = commitResult.stdout.substring(0, 7);
 
 		// Read the compose file
-		const composePath = join(repoPath, repo.composePath);
+		const composePath = repoFilePath(repoPath, repo.composePath, "Compose path");
 		if (!existsSync(composePath)) {
 			throw new Error(`Compose file not found: ${repo.composePath}`);
 		}
@@ -924,6 +928,7 @@ export async function syncGitStack(stackId: number): Promise<SyncResult> {
 		}
 
 		console.log(`${logPrefix} Cloning repository...`);
+		assertSafeGitRef(repo.branch);
 		const repoUrl = buildRepoUrl(repo.url, credential);
 
 		const result = await execGit(
@@ -993,7 +998,7 @@ export async function syncGitStack(stackId: number): Promise<SyncResult> {
 		console.log(`${logPrefix} Current commit:`, currentCommit);
 
 		// Read the compose file
-		const composePath = join(repoPath, gitStack.composePath);
+		const composePath = repoFilePath(repoPath, gitStack.composePath, "Compose path");
 		console.log(`${logPrefix} Reading compose file from:`, composePath);
 		if (!existsSync(composePath)) {
 			console.log(`${logPrefix} ERROR: Compose file not found at:`, composePath);
@@ -1035,7 +1040,7 @@ export async function syncGitStack(stackId: number): Promise<SyncResult> {
 		let envFileContent: string | undefined;
 		let envFileName: string | undefined;
 		if (gitStack.envFilePath) {
-			const envFilePath = join(repoPath, gitStack.envFilePath);
+			const envFilePath = repoFilePath(repoPath, gitStack.envFilePath, "Env file path");
 			console.log(`${logPrefix} Looking for env file at:`, envFilePath);
 			if (existsSync(envFilePath)) {
 				try {
@@ -1280,6 +1285,7 @@ export async function testGitStack(stackId: number): Promise<TestResult> {
 
 	const credential = repo.credentialId ? await getGitCredential(repo.credentialId) : null;
 	const env = await buildGitEnv(credential);
+	assertSafeGitRef(repo.branch);
 	const repoUrl = buildRepoUrl(repo.url, credential);
 
 	try {
@@ -1388,6 +1394,7 @@ export async function deployGitStackWithProgress(
 			rmSync(repoPath, { recursive: true, force: true });
 		}
 
+		assertSafeGitRef(repo.branch);
 		const repoUrl = buildRepoUrl(repo.url, credential);
 
 		// Step 3: Fetching (blobless clone - fetches all commits but blobs on-demand)
@@ -1433,7 +1440,7 @@ export async function deployGitStackWithProgress(
 
 		// Step 4: Reading compose file
 		onProgress({ status: 'reading', message: `Reading ${gitStack.composePath}...`, step: 4, totalSteps });
-		const composePath = join(repoPath, gitStack.composePath);
+		const composePath = repoFilePath(repoPath, gitStack.composePath, "Compose path");
 		if (!existsSync(composePath)) {
 			throw new Error(`Compose file not found: ${gitStack.composePath}`);
 		}
@@ -1462,7 +1469,7 @@ export async function deployGitStackWithProgress(
 		// Read env file if configured (optional - don't fail if missing)
 		let envFileVars: Record<string, string> | undefined;
 		if (gitStack.envFilePath) {
-			const envFilePath = join(repoPath, gitStack.envFilePath);
+			const envFilePath = repoFilePath(repoPath, gitStack.envFilePath, "Env file path");
 			if (existsSync(envFilePath)) {
 				try {
 					const envContent = readFileSync(envFilePath, 'utf-8');
@@ -1527,7 +1534,7 @@ export async function deployGitStackWithProgress(
 		// Determine env filename relative to compose dir (same logic as syncGitStack)
 		let envFileName: string | undefined;
 		if (gitStack.envFilePath) {
-			const envFilePath = join(repoPath, gitStack.envFilePath);
+			const envFilePath = repoFilePath(repoPath, gitStack.envFilePath, "Env file path");
 			if (existsSync(envFilePath)) {
 				envFileName = relative(composeDir, envFilePath);
 			}
@@ -1789,6 +1796,7 @@ export async function previewRepoEnvFiles(options: PreviewEnvOptions): Promise<P
 		// Build git environment with credentials
 		// Cast credential to GitCredential type (only uses id, authType, sshPrivateKey)
 		const env = await buildGitEnv(credential as GitCredential | null);
+		assertSafeGitRef(branch);
 		const authenticatedUrl = buildRepoUrl(repoUrl, credential as GitCredential | null);
 
 		// Clone with depth 1 (shallow clone for speed)

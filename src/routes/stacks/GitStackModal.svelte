@@ -20,10 +20,7 @@
 	import { toast } from 'svelte-sonner';
 	import { focusFirstInput } from '$lib/utils';
 	import { readJobResponse } from '$lib/utils/sse-fetch';
-	import { useSidebar } from '$lib/components/ui/sidebar/context.svelte';
 
-	// Get sidebar state to adjust modal positioning
-	const sidebar = useSidebar();
 
 	// localStorage key for persisted split ratio
 	const STORAGE_KEY_SPLIT = 'dockhand-git-stack-modal-split';
@@ -149,7 +146,7 @@
 	let formError = $state('');
 	let formSaving = $state(false);
 	let showExistsWarning = $state(false);
-	let errors = $state<{ stackName?: string; repository?: string; repoName?: string; repoUrl?: string }>({});
+	let errors = $state<{ stackName?: string; repository?: string; repoName?: string; repoUrl?: string; webhookSecret?: string }>({});
 
 	// Stack name validation: Docker Compose requires lowercase; must start with a
 	// letter or number, and contain only lowercase letters, numbers, hyphens, underscores
@@ -489,6 +486,11 @@
 			hasErrors = true;
 		}
 
+		if (formWebhookEnabled && !formWebhookSecret.trim()) {
+			errors.webhookSecret = 'A webhook secret is required when the webhook is enabled';
+			hasErrors = true;
+		}
+
 		if (hasErrors) return;
 
 		// Check if stack already exists (only for new stacks)
@@ -625,7 +627,7 @@
 
 <Dialog.Root bind:open onOpenChange={(isOpen) => { if (isOpen) focusFirstInput(); }}>
 	<Dialog.Content
-		class="max-w-none h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700 {sidebar.state === 'collapsed' ? 'w-[calc(100vw-6rem)] ml-[1.5rem]' : 'w-[calc(100vw-12rem)] ml-[4.5rem]'}"
+		class="max-w-none w-[calc(100vw-4rem)] h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700"
 		showCloseButton={false}
 	>
 		<Dialog.Header class="px-5 py-3 border-b border-zinc-200 dark:border-zinc-700 flex-shrink-0">
@@ -965,7 +967,10 @@
 					<Webhook class="w-4 h-4 text-muted-foreground" />
 					<Label class="text-sm font-normal">Enable webhook</Label>
 				</div>
-				<TogglePill bind:checked={formWebhookEnabled} />
+				<TogglePill
+					bind:checked={formWebhookEnabled}
+					onchange={() => { if (formWebhookEnabled && !formWebhookSecret) formWebhookSecret = generateWebhookSecret(); }}
+				/>
 			</div>
 				<p class="text-xs text-muted-foreground">
 					Receive push events from your Git provider to trigger sync and redeploy.
@@ -1003,13 +1008,14 @@
 						</div>
 					{/if}
 					<div class="space-y-2">
-						<Label for="webhook-secret">Webhook secret (optional)</Label>
+						<Label for="webhook-secret">Webhook secret</Label>
 						<div class="flex gap-2">
 							<Input
 								id="webhook-secret"
 								bind:value={formWebhookSecret}
-								placeholder="Leave empty for no signature verification"
-								class="font-mono text-xs"
+								placeholder="Required - generate or paste a secret"
+								class="font-mono text-xs {errors.webhookSecret ? 'border-destructive focus-visible:ring-destructive' : ''}"
+								oninput={() => errors.webhookSecret = undefined}
 							/>
 							{#if gitStack && formWebhookSecret}
 								<Button
@@ -1045,6 +1051,9 @@
 								<Tooltip.Content>Generate secret</Tooltip.Content>
 							</Tooltip.Root>
 						</div>
+						{#if errors.webhookSecret}
+							<p class="text-xs text-destructive">{errors.webhookSecret}</p>
+						{/if}
 					</div>
 					{#if !gitStack}
 						<p class="text-xs text-muted-foreground">

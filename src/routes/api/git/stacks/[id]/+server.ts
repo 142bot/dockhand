@@ -63,6 +63,14 @@ export const PUT: RequestHandler = async (event) => {
 			data.stackName = trimmedStackName;
 		}
 
+		// A secret is mandatory when the webhook is enabled.
+		// Evaluate the effective post-update state (PUT is partial).
+		const effWebhookEnabled = data.webhookEnabled !== undefined ? data.webhookEnabled : existing.webhookEnabled;
+		const effWebhookSecret = data.webhookSecret !== undefined ? data.webhookSecret : existing.webhookSecret;
+		if (effWebhookEnabled && !effWebhookSecret?.trim()) {
+			return json({ error: 'A webhook secret is required when the webhook is enabled' }, { status: 400 });
+		}
+
 		const oldStackName = existing.stackName;
 		const updated = await updateGitStack(id, {
 			stackName: data.stackName,
@@ -195,8 +203,10 @@ export const DELETE: RequestHandler = async (event) => {
 		// Delete the stack_sources record to free up the stack name
 		await deleteStackSource(existing.stackName, existing.environmentId);
 
-		// Delete all env var overrides for this stack (all environments)
-		await deleteStackEnvVars(existing.stackName);
+		// Delete this stack's env var overrides ON THIS ENVIRONMENT ONLY. The same
+		// stack name can be deployed to multiple environments independently (per-env
+		// rows), so an unscoped delete would wipe another environment's vars/secrets.
+		await deleteStackEnvVars(existing.stackName, existing.environmentId);
 
 		// Delete from database
 		await deleteGitStack(id);

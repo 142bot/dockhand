@@ -6,7 +6,6 @@ import type { RequestHandler } from './$types';
  * GET /api/jobs/[id]
  * Poll a job's status and accumulated lines.
  * Returns all lines every time — client tracks its own cursor locally.
- * No auth required: job IDs are UUIDs (unguessable), no sensitive data beyond what the initiating user triggered.
  */
 export const GET: RequestHandler = async ({ params }) => {
 	const job = getJob(params.id);
