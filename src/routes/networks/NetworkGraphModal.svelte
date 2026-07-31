@@ -6,11 +6,8 @@
 	import { focusFirstInput } from "$lib/utils";
 	import { ErrorDialog } from "$lib/components/ui/error-dialog";
 	import NetworkGraphViewer from "./NetworkGraphViewer.svelte";
-	import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
 	import type { NetworkInfo } from "$lib/types";
 
-	// Get sidebar state to adjust modal positioning
-	const sidebar = useSidebar();
 
 	interface Props {
 		open: boolean;
@@ -97,9 +94,7 @@
 	}}
 >
 	<Dialog.Content
-		class="max-w-none h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700 {sidebar.state === 'collapsed'
-			? 'w-[calc(100vw-6rem)] ml-[1.5rem]'
-			: 'w-[calc(100vw-12rem)] ml-[4.5rem]'}"
+		class="max-w-none w-[calc(100vw-4rem)] h-[95vh] flex flex-col p-0 gap-0 shadow-xl border-zinc-200 dark:border-zinc-700"
 		showCloseButton={false}
 	>
 		<Dialog.Header class="px-5 py-3 border-b border-zinc-200 dark:border-zinc-700 flex-shrink-0">

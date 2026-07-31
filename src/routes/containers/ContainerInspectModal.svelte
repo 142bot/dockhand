@@ -637,7 +637,7 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="max-w-6xl w-full h-[calc(100vh-2rem)] flex flex-col">
+	<Dialog.Content class="max-w-6xl w-[calc(100%-2rem)] h-[calc(100vh-2rem)] flex flex-col">
 		<Dialog.Header class="shrink-0">
 			<Dialog.Title class="flex items-center gap-2">
 				<Box class="w-5 h-5" />

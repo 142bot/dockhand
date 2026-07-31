@@ -22,7 +22,7 @@
 			</Dialog.Title>
 		</Dialog.Header>
 
-		<div class="flex-1 overflow-auto space-y-4">
+		<div class="flex-1 overflow-auto space-y-4 pr-2">
 			<ImageLayersView
 				imageId={imageId}
 				imageName={imageName}
