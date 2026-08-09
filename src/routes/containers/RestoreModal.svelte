@@ -1047,8 +1047,12 @@
 						disabled={!canRun || restoring}
 						variant={mode === 'in-place' ? 'destructive' : 'default'}
 					>
-						{#if restoring}<Loader2 class="mr-1.5 h-4 w-4 animate-spin" />{:else}<Play class="mr-1.5 h-4 w-4" />{/if}
-						{mode === 'in-place' ? 'Overwrite & restore' : (postRestore !== 'none' ? 'Restore & start' : 'Restore')}
+						{#if restoring}<Loader2 class="mr-1.5 h-4 w-4 animate-spin" />{:else if targetPreviewLoading}<Loader2 class="mr-1.5 h-4 w-4 animate-spin" />{:else}<Play class="mr-1.5 h-4 w-4" />{/if}
+						{#if targetPreviewLoading && !restoring}
+							Checking target&hellip;
+						{:else}
+							{mode === 'in-place' ? 'Overwrite & restore' : (postRestore !== 'none' ? 'Restore & start' : 'Restore')}
+						{/if}
 					</Button>
 				{/if}
 			{/if}

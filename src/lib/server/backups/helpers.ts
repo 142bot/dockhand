@@ -5,6 +5,7 @@
  * no globals, no DB. Safe to call in any context and to unit-test in isolation.
  */
 
+import { join } from 'node:path';
 import { isValidCron } from '../scheduler/cron-utils';
 import { privateIpReason, dangerousHostReason, isSafeWebhookUrl, isSafeNotificationUrl } from '../url-safety';
 import { BackupError, isLocalRepo } from './models';
@@ -297,7 +298,12 @@ export function isRepoNotInitializedError(error: unknown): boolean {
 export function classifyBackupError(error: unknown): string {
 	if (isRepoNotInitializedError(error)) return 'REPO_NOT_INIT';
 	const raw = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
-	if (raw.includes('sigterm') || raw.includes('sigkill') || raw.includes('timed out') || raw.includes('timeout')) return 'RESTIC_TIMEOUT';
+	// A killed/cancelled restic (slow remote backend, watchdog timeout) reports its
+	// OWN exit as `signal terminated` / `context canceled`, and restic then prints a
+	// MISLEADING `code:12 wrong password or no key found` because it was interrupted
+	// mid key-load. Catch the termination markers FIRST so a timeout is never
+	// mis-surfaced to the user as a bad password.
+	if (raw.includes('sigterm') || raw.includes('sigkill') || raw.includes('signal terminated') || raw.includes('signal killed') || raw.includes('context canceled') || raw.includes('context cancelled') || raw.includes('timed out') || raw.includes('timeout')) return 'RESTIC_TIMEOUT';
 	if (raw.includes('wrong password') || raw.includes('invalid password') || raw.includes('no key found')) return 'WRONG_PASSWORD';
 	if (raw.includes('already locked') || raw.includes('unable to create lock') || raw.includes('repository is already locked')) return 'REPO_LOCKED';
 	if (raw.includes('no volumes') || raw.includes('nothing to backup')) return 'NO_VOLUMES';
@@ -398,6 +404,16 @@ export function buildResticEnv(
 	const env: Record<string, string> = {};
 	for (const [k, v] of Object.entries(procEnv)) {
 		if (v !== undefined && RESTIC_BASE_ENV_ALLOW.has(k)) env[k] = v;
+	}
+	// Persist restic's cache under DATA_DIR (a durable volume) instead of the default
+	// $HOME/.cache/restic on the container's ephemeral RW layer, which is wiped on every
+	// redeploy. A cold cache re-fetches the repo index from the remote backend (backblaze/
+	// S3) on the first ls/snapshots/dump after a redeploy - ~3x slower and enough to trip a
+	// reverse proxy's idle timeout. Only for the host-side restic (this fn feeds runLocal +
+	// destination test); the helper container builds its env separately (buildHelperEnv). An
+	// operator-set RESTIC_CACHE_DIR (copied in above) wins.
+	if (!env.RESTIC_CACHE_DIR) {
+		env.RESTIC_CACHE_DIR = join(procEnv.DATA_DIR || '/app/data', '.restic-cache');
 	}
 	env.RESTIC_REPOSITORY = opts.repository;
 	env.RESTIC_PASSWORD = opts.password;

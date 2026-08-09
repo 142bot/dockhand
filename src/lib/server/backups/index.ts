@@ -1046,7 +1046,12 @@ function reader() {
 async function listSnapshotVolumes(destination: any, snapshotId: string): Promise<string[]> {
 	const { isReservedVolumeKey } = await import('./stackdir-plan');
 	const run = await restic.runLocal(destination, ['ls', '--json', '--no-lock', snapshotId, '/volumes/']);
-	if (run.exitCode !== 0) return [];
+	// A FAILED `ls` (timeout / killed / slow remote backend) is NOT "the snapshot has no
+	// volumes" - returning [] there makes restore report a MISLEADING "not found in snapshot,
+	// Available: none" for a snapshot that actually holds data. Fail loud with the real reason.
+	if (run.exitCode !== 0) {
+		throw new BackupError('RESTIC', `could not list the snapshot's volumes: ${run.stderr.trim() || 'restic ls failed'}`, { exitCode: run.exitCode });
+	}
 	const names = new Set<string>();
 	for (const line of run.stdout.split('\n')) {
 		try {
