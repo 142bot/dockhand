@@ -469,7 +469,7 @@
   },
   {
     "name": "dockhand",
-    "version": "1.0.38",
+    "version": "1.0.41",
     "license": "UNLICENSED",
     "repository": null
   },
@@ -589,7 +589,7 @@
   },
   {
     "name": "js-yaml",
-    "version": "4.3.0",
+    "version": "4.3.1",
     "license": "MIT",
     "repository": "https://github.com/nodeca/js-yaml"
   },
@@ -634,6 +634,12 @@
     "version": "0.5.3",
     "license": "MIT",
     "repository": "https://github.com/mafintosh/mkdirp-classic"
+  },
+  {
+    "name": "modern-tar",
+    "version": "0.8.0",
+    "license": "MIT",
+    "repository": "https://github.com/ayuhito/modern-tar"
   },
   {
     "name": "napi-build-utils",
@@ -901,7 +907,7 @@
   },
   {
     "name": "undici",
-    "version": "7.28.0",
+    "version": "7.29.0",
     "license": "MIT",
     "repository": "https://github.com/nodejs/undici"
   },

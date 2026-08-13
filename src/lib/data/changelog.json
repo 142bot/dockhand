@@ -1,5 +1,49 @@
 [
   {
+    "version": "1.0.42",
+    "date": "",
+    "comingSoon": true,
+    "changes": [
+      {
+        "type": "feature",
+        "text": "support caddy-docker-proxy labels (#1390)"
+      },
+      {
+        "type": "fix",
+        "text": "updating a compose file over the API now saves it, not just deploys it (#1383)"
+      },
+      {
+        "type": "fix",
+        "text": "reopening the MFA setup screen while MFA is enabled no longer wipes the secret and backup codes (#1399)"
+      },
+      {
+        "type": "feature",
+        "text": "upload a Docker image .tar through the UI (docker load) for air-gapped hosts (#88, #1389)"
+      },
+      {
+        "type": "fix",
+        "text": "stack deploys no longer leak Dockhand's own DOCKER_HOST into services (#1393)"
+      },
+      {
+        "type": "feature",
+        "text": "stack secrets from external providers (1Password, HashiCorp Vault, Infisical and Doppler) (PR#1360, @wintech147)"
+      },
+      {
+        "type": "fix",
+        "text": "container update no longer fails on Podman when CPU limits are set (#1381)"
+      },
+      {
+        "type": "fix",
+        "text": "stack deploy now respects DOCKER_CONFIG when pulling private images (#1376)"
+      },
+      {
+        "type": "fix",
+        "text": "start, stop or restart on Hawser updates its files on the remote host, not only on redeploy (#1240)"
+      }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.42"
+  },
+  {
     "version": "1.0.41",
     "date": "2026-08-09",
     "changes": [
