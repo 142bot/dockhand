@@ -5,6 +5,7 @@ import { requireBackups } from '$lib/server/backups/route-guards';
 import { previewSnapshot, previewRestoreTargets } from '$lib/server/backups';
 import { validateSnapshotId } from '$lib/server/docker-validation';
 import { guardSnapshotEnvAccess } from '$lib/server/backups/route-guards';
+import { jobResult } from '$lib/server/sse';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const auth = await authorize(cookies);
@@ -26,7 +27,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	const denied = await guardSnapshotEnvAccess(auth, body.destinationId, body.snapshotId);
 	if (denied) return denied;
 
-	try {
+	// Job-polling: the preview runs restic (verify-ownership + ls/dump) and, with a mode,
+	// per-volume probe helpers - all slow enough that a reverse proxy would abort the sync
+	// request at ~15s and SIGTERM the restic mid-op (the "wrong password / signal terminated"
+	// red herrings). Returning {jobId} immediately keeps the connection alive; the client polls.
+	return jobResult(request, async () => {
 		const access = { isEnterprise: auth.isEnterprise, canAccessEnvironment: (id: number) => auth.canAccessEnvironment(id) };
 		const preview = await previewSnapshot(body.destinationId, body.snapshotId, access);
 		// When the caller supplies a restore mode, ALSO resolve the exact on-disk targets and probe
@@ -44,11 +49,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				mergeStackFiles: body.mergeStackFiles,
 				volumes: body.volumes,
 			}, access);
-			return json({ ...preview, targets });
+			return { ...preview, targets };
 		}
-		return json(preview);
-	} catch (error) {
-		const errorMsg = error instanceof Error ? error.message : String(error);
-		return json({ error: errorMsg }, { status: 500 });
-	}
+		return preview;
+	});
 };

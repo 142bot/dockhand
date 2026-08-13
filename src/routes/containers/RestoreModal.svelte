@@ -9,7 +9,7 @@
 	import { RotateCcw, AlertTriangle, Loader2, HardDrive, Folder, Clock, Play, CheckCircle2, XCircle, Server, PackagePlus, Ban, Rocket, Box, Layers, HelpCircle, Info, KeyRound, FileX } from 'lucide-svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { toast } from 'svelte-sonner';
-	import { watchJob } from '$lib/utils/sse-fetch';
+	import { watchJob, readJobResponse } from '$lib/utils/sse-fetch';
 	import { environments } from '$lib/stores/environment';
 	import { formatDateTime } from '$lib/stores/settings';
 	import EnvironmentIcon from '$lib/components/EnvironmentIcon.svelte';
@@ -346,16 +346,18 @@
 		loading = true;
 		error = '';
 		try {
+			// Job-polling (server returns {jobId}; readJobResponse polls to the result) so a slow
+			// restic verify/read behind a reverse proxy can't be aborted at ~15s.
 			const res = await fetch('/api/backup/restore/preview', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
 				body: JSON.stringify({ destinationId, snapshotId, environmentId })
 			});
-			if (!res.ok) {
-				error = (await res.json()).error || 'Failed to read the snapshot';
+			const data = await readJobResponse(res);
+			if (data?.error) {
+				error = data.error || 'Failed to read the snapshot';
 				return;
 			}
-			const data = await res.json();
 			const types: Record<string, 'volume' | 'bind'> = data.volumeTypes || {};
 			const sources: Record<string, string> = data.volumeSources || {};
 			// Pre-fill each destination 1:1 from the snapshot's original location: a
@@ -398,9 +400,11 @@
 			const volumeDestinations = mode === 'new-location'
 				? selectedRows.map((v) => ({ volume: v.name, kind: v.destKind, target: v.dest.trim() }))
 				: undefined;
+			// Job-polling: the target probe runs a helper container per volume on the target host
+			// (slowest read path) - a sync request would abort at the proxy's ~15s.
 			const res = await fetch('/api/backup/restore/preview', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
 				body: JSON.stringify({
 					destinationId, snapshotId, mode, environmentId: envId,
 					targetType: targetIsStack ? 'stack' : 'container',
@@ -409,14 +413,13 @@
 					volumes: selectedRows.map((v) => v.name),
 				})
 			});
-			if (seq !== targetPreviewSeq) return; // a newer request superseded this one
-			if (!res.ok) {
+			const data = await readJobResponse(res);
+			if (seq !== targetPreviewSeq) return; // a newer request superseded this one (checked AFTER the poll)
+			if (data?.error) {
 				targetPreview = null;
-				const msg = await res.json().then((d) => d?.error).catch(() => null);
-				targetPreviewError = msg || 'Could not check the target paths on the environment.';
+				targetPreviewError = data.error || 'Could not check the target paths on the environment.';
 				return;
 			}
-			const data = await res.json();
 			targetPreview = data.targets ?? null;
 		} catch {
 			if (seq === targetPreviewSeq) { targetPreview = null; targetPreviewError = 'Could not reach the server to check the target paths.'; }

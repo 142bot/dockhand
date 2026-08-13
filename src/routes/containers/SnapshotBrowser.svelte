@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as Dialog from '$lib/components/ui/dialog';
+	import { readJobResponse } from '$lib/utils/sse-fetch';
 	import { Badge } from '$lib/components/ui/badge';
 	import {
 		FolderOpen, Box, Layers, Network, HardDrive, Tag, Variable,
@@ -68,9 +69,12 @@
 				destinationRepo = dest.repository || '';
 			}
 			// Get snapshot time + owning environment from the snapshot's tags.
-			const snapRes = await fetch(`/api/backup/snapshots?destinationId=${destinationId}`);
-			if (snapRes.ok) {
-				const d = await snapRes.json();
+			// Job-polling so a slow `restic snapshots` behind a proxy isn't aborted at ~15s.
+			const snapRes = await fetch(`/api/backup/snapshots?destinationId=${destinationId}`, {
+				headers: { Accept: 'text/event-stream' }
+			});
+			const d = await readJobResponse(snapRes);
+			if (d && !d.error) {
 				const snaps = d.snapshots ?? d;
 				const snap = (Array.isArray(snaps) ? snaps : []).find((s: any) => s.id === snapshotId || s.shortId === snapshotId?.slice(0, 8));
 				if (snap) {
@@ -91,13 +95,11 @@
 		metadataLoading = true;
 		metadataError = '';
 		try {
-			const res = await fetch(`/api/backup/snapshots/${snapshotId}/metadata?destinationId=${destinationId}`);
-			if (res.ok) {
-				metadata = await res.json();
-			} else {
-				try { metadataError = (await res.json()).error || 'No metadata available'; }
-				catch { metadataError = 'No metadata available'; }
-			}
+			// Job-polling so a slow `restic dump` behind a proxy isn't aborted at ~15s.
+			const res = await fetch(`/api/backup/snapshots/${snapshotId}/metadata?destinationId=${destinationId}`, { headers: { Accept: 'text/event-stream' } });
+			const data = await readJobResponse(res);
+			if (data?.error) metadataError = data.error || 'No metadata available';
+			else metadata = data;
 		} catch { metadataError = 'Failed to load metadata'; }
 		finally { metadataLoading = false; }
 	}

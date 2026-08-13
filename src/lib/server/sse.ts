@@ -68,3 +68,21 @@ export function createJobResponse(
 
 	return json({ jobId: job.id });
 }
+
+/**
+ * Job-polling wrapper for a read endpoint that just returns DATA (no progress lines):
+ * run `fn`, deliver its value as the single `result`, and turn a thrown error into a
+ * `{ error }` result (HTTP 200 + a failed-shaped payload the client reads back via
+ * readJobResponse). Collapses the identical createJobResponse+try/catch boilerplate every
+ * backup read endpoint (browse/preview/metadata/diff) had. The proxy sees {jobId} at once,
+ * so a slow restic op can't be aborted mid-flight at the reverse-proxy's ~15s cap.
+ */
+export function jobResult<T>(request: Request | undefined, fn: () => Promise<T>): Response {
+	return createJobResponse(async (send) => {
+		try {
+			send('result', await fn());
+		} catch (error) {
+			send('result', { error: error instanceof Error ? error.message : String(error) });
+		}
+	}, request);
+}

@@ -26,7 +26,7 @@
 	import { canAccess } from '$lib/stores/auth';
 	import DestinationModal from './DestinationModal.svelte';
 	import BackupLogModal from '../../backups/BackupLogModal.svelte';
-	import { watchJob } from '$lib/utils/sse-fetch';
+	import { watchJob, readJobResponse } from '$lib/utils/sse-fetch';
 	import RotatePasswordModal from './RotatePasswordModal.svelte';
 	import { EmptyState } from '$lib/components/ui/empty-state';
 
@@ -370,13 +370,17 @@
 		browseOpen = true;
 		browseLoading = true;
 		try {
-			// List all snapshots in this destination (no configId filter)
-			const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`);
-			if (res.ok) { const d = await res.json(); browseSnapshots = d.snapshots ?? d; }
-			else {
-				const data = await res.json();
-				const errMsg = data.error || 'Failed to list snapshots';
+			// List all snapshots in this destination (no configId filter). Job-polling so a
+			// slow `restic snapshots` behind a proxy isn't aborted at ~15s.
+			const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`, {
+				headers: { Accept: 'text/event-stream' }
+			});
+			const d = await readJobResponse(res);
+			if (d?.error) {
+				const errMsg = d.error || 'Failed to list snapshots';
 				try { const p = JSON.parse(errMsg); toast.error(p.message || errMsg); } catch { toast.error(errMsg); }
+			} else {
+				browseSnapshots = d.snapshots ?? d;
 			}
 		} catch { toast.error('Failed to list snapshots'); }
 		finally { browseLoading = false; }

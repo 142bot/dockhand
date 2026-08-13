@@ -6,6 +6,7 @@
 	import { LoadingState } from '$lib/components/ui/loading-state';
 	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { formatBytes } from '$lib/utils/format';
+	import { readJobResponse } from '$lib/utils/sse-fetch';
 	import { getRepoTypeIcon } from '$lib/utils/backup';
 	import SnapshotBrowser from './SnapshotBrowser.svelte';
 	import RestoreModal from './RestoreModal.svelte';
@@ -111,9 +112,12 @@
 			// many (or one unreachable) repos the list fills in live rather than after a long wait.
 			await Promise.all(destinations.map(async (dest) => {
 				try {
-					const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`);
-					if (!res.ok) return;
-					const data = await res.json();
+					// Job-polling so a slow `restic snapshots` behind a proxy isn't aborted at ~15s.
+					const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`, {
+						headers: { Accept: 'text/event-stream' }
+					});
+					const data = await readJobResponse(res);
+					if (data?.error) return;
 					const snaps: any[] = data.snapshots ?? data;
 					const mine = snaps
 						.filter((s) => (s.tags || []).some((t: string) => t === nameTag))

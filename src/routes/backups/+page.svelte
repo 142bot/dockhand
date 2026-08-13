@@ -25,7 +25,7 @@
 	import RotateCwFadingClock from '$lib/components/icons/RotateCwFadingClock.svelte';
 	import { formatDateTime, formatRelativeTime } from '$lib/stores/settings';
 	import { currentEnvironment } from '$lib/stores/environment';
-	import { watchJob } from '$lib/utils/sse-fetch';
+	import { watchJob, readJobResponse } from '$lib/utils/sse-fetch';
 	import { getRepoTypeIcon, formatCron, retentionSummary, classifyJobResult, tagLogLine } from '$lib/utils/backup';
 	import SnapshotBrowser from '../containers/SnapshotBrowser.svelte';
 	import RestoreModal from '../containers/RestoreModal.svelte';
@@ -328,6 +328,14 @@
 		// one of these belongs to a shown config; anything else is orphaned.
 		const liveConfigIds = new Set(configs.map(c => c.id));
 
+		// This install's id, fetched once: a snapshot is a LOCAL config's only when THIS
+		// instance wrote it (configid collides across installs - #1351). Formerly read from
+		// the snapshots list's X-Dockhand-Instance header, which job polling can't carry.
+		const thisInstance = await fetch('/api/backup/instance')
+			.then(r => r.ok ? r.json() : { instanceId: '' })
+			.then(d => d.instanceId || '')
+			.catch(() => '');
+
 		// Query each destination once, then split its snapshots two ways: PER CONFIG
 		// (by dockhand:configid) for the shown rows, and PER NAME for the orphan rows
 		// (snapshots whose config was deleted). The right-column count must match the
@@ -340,13 +348,12 @@
 		// rest keep filling in counts progressively behind the scenes.
 		await Promise.allSettled(destinations.map(async (dest) => {
 			try {
-				const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`);
-				if (!res.ok) return;
-				// This install id: a snapshot belongs to a LOCAL config only when THIS instance wrote it.
-				// configid collides across instances (a fresh install reuses 1,2,3...), so a foreign
-				// snapshot with configid=1 must be an orphan, not mis-bucketed into local config #1 (#1351).
-				const thisInstance = res.headers.get("X-Dockhand-Instance") || "";
-				const d = await res.json();
+				// Job-polling so a slow `restic snapshots` behind a proxy isn't aborted at ~15s.
+				const res = await fetch(`/api/backup/snapshots?destinationId=${dest.id}`, {
+					headers: { Accept: 'text/event-stream' }
+				});
+				const d = await readJobResponse(res);
+				if (!d || d.error) return;
 				const snaps: any[] = d.snapshots ?? d;
 				if (!Array.isArray(snaps)) return;
 
@@ -406,16 +413,17 @@
 		loadingSnapshots = newLoading;
 
 		try {
-			// Query snapshots for this config's destination only (not allDestinations)
+			// Query snapshots for this config's destination only (not allDestinations).
+			// Job-polling so a slow `restic snapshots` behind a proxy isn't aborted at ~15s.
 			const snapUrl = config.isOrphan
 				? `/api/backup/snapshots?destinationId=${config.destinationId}`
 				: `/api/backup/snapshots?configId=${config.id}`;
-			const [snapRes, execRes] = await Promise.all([
-				fetch(snapUrl),
+			const [snapJson, execRes] = await Promise.all([
+				fetch(snapUrl, { headers: { Accept: 'text/event-stream' } }).then(readJobResponse),
 				config.isOrphan ? Promise.resolve(new Response('{"executions":[]}')) : fetch(`/api/schedules/executions?scheduleType=backup&scheduleId=${config.id}&limit=50`)
 			]);
-			const snapJson = await snapRes.json();
-			let snapData = snapJson.snapshots ?? snapJson;
+			const snapError = snapJson?.error;
+			let snapData = snapJson?.snapshots ?? snapJson;
 			// For orphans, filter by target name (they can span destinations).
 			if (config.isOrphan && Array.isArray(snapData)) {
 				snapData = snapData.filter((s: any) => (s.tags || []).some((t: string) => t === `dockhand:name=${config.targetName}`));
@@ -433,11 +441,11 @@
 				}));
 			}
 			const newMap = new Map(snapshotsMap);
-			if (snapRes.ok) {
+			if (!snapError) {
 				newMap.set(key, Array.isArray(snapData) ? snapData : []);
 			} else {
 				newMap.set(key, []);
-				toast.error(cleanErrorMessage(snapData.error || 'Failed to load snapshots'));
+				toast.error(cleanErrorMessage(snapError || 'Failed to load snapshots'));
 			}
 			snapshotsMap = newMap;
 
@@ -784,13 +792,17 @@
 			<p class="text-sm text-muted-foreground">Configure backups on individual containers or stacks via their edit modal.</p>
 		</div>
 	{:else}
+		<!-- virtualScroll is OFF here on purpose: it assumes a fixed rowHeight, but an
+		     expanded config renders a variable-height snapshot list, so the fixed-height
+		     spacers mis-size the scroll area (flicker + endless scroll). Backup configs
+		     number in the dozens, so plain rendering - the browser measures real heights -
+		     is correct and fast. -->
 		<DataGrid
 			data={filteredConfigs}
 			keyField="key"
 			gridId="backups"
 			loading={loading}
-			virtualScroll={true}
-			rowHeight={33}
+			virtualScroll={false}
 			sortState={{ field: sortField, direction: sortDirection }}
 			onSortChange={(state) => { sortField = state.field; sortDirection = state.direction; }}
 			bind:expandedKeys={expandedKeys}

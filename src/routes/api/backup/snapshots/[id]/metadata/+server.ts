@@ -6,8 +6,9 @@ import { requireBackups } from '$lib/server/backups/route-guards';
 import { getSnapshotMetadata } from '$lib/server/backups';
 import { guardSnapshotEnvAccess } from '$lib/server/backups/route-guards';
 import { redactSnapshotLayout } from '$lib/server/backups/snapshot-layout';
+import { jobResult } from '$lib/server/sse';
 
-export const GET: RequestHandler = async ({ params, url, cookies }) => {
+export const GET: RequestHandler = async ({ params, url, cookies, request }) => {
 	const auth = await authorize(cookies);
 	const denied = await requireBackups(auth, 'view');
 	if (denied) return denied;
@@ -26,14 +27,12 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	const envDenied = await guardSnapshotEnvAccess(auth, destinationId, snapshotId);
 	if (envDenied) return envDenied;
 
-	try {
+	// Job-polling: reading metadata runs `restic dump` which a proxy would abort at ~15s.
+	return jobResult(request, async () => {
 		const metadata = await getSnapshotMetadata(destinationId, snapshotId);
-		if (!metadata) return json({ error: 'No metadata available' }, { status: 404 });
+		if (!metadata) return { error: 'No metadata available' };
 		// Single redaction point: strips stack.secrets values AND container inspect
 		// Config.Env/Labels (plaintext secrets) before anything reaches the client.
-		return json(redactSnapshotLayout(metadata));
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		return json({ error: msg }, { status: 500 });
-	}
+		return redactSnapshotLayout(metadata);
+	});
 };

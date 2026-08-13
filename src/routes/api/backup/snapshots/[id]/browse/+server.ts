@@ -5,8 +5,9 @@ import { authorize } from '$lib/server/authorize';
 import { requireBackups } from '$lib/server/backups/route-guards';
 import { browseSnapshot } from '$lib/server/backups';
 import { guardSnapshotEnvAccess } from '$lib/server/backups/route-guards';
+import { jobResult } from '$lib/server/sse';
 
-export const GET: RequestHandler = async ({ params, url, cookies }) => {
+export const GET: RequestHandler = async ({ params, url, cookies, request }) => {
 	const auth = await authorize(cookies);
 	const denied = await requireBackups(auth, 'view');
 	if (denied) return denied;
@@ -38,11 +39,10 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		return json({ error: 'Environment access denied' }, { status: 403 });
 	}
 
-	try {
+	// Job-polling: `restic ls` behind a reverse proxy would abort at ~15s and SIGTERM restic
+	// (surfacing a misleading "wrong password / signal terminated"). Return {jobId} at once.
+	return jobResult(request, async () => {
 		const entries = await browseSnapshot(destinationId, snapshotId, path);
-		return json({ entries, path });
-	} catch (error) {
-		const errorMsg = error instanceof Error ? error.message : String(error);
-		return json({ error: errorMsg }, { status: 500 });
-	}
+		return { entries, path };
+	});
 };

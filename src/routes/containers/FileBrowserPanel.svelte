@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { readJobResponse } from '$lib/utils/sse-fetch';
 	import { Button } from '$lib/components/ui/button';
 	import * as Table from '$lib/components/ui/table';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -400,9 +401,15 @@
 
 		try {
 			let res: Response;
+			let data: any;
 			if (isSnapshotMode) {
 				const params = new URLSearchParams({ destinationId: String(destinationId), path: filePath });
-				res = await fetch(`/api/backup/snapshots/${snapshotId}/dump?${params}`);
+				// Job-polling (readJobResponse) so a slow `restic dump` behind a proxy isn't aborted at ~15s.
+				res = await fetch(`/api/backup/snapshots/${snapshotId}/dump?${params}`, {
+					headers: { Accept: 'text/event-stream' }
+				});
+				data = await readJobResponse(res);
+				if (data?.error) throw new Error(data.error);
 			} else {
 				const params = new URLSearchParams({ path: filePath });
 				if (envId) params.set('env', envId.toString());
@@ -411,11 +418,10 @@
 				} else {
 					res = await fetch(`/api/containers/${effectiveContainerId}/files/content?${params}`);
 				}
-			}
-			const data = await res.json();
-
-			if (!res.ok) {
-				throw new Error(data.error || 'Failed to read file');
+				data = await res.json();
+				if (!res.ok) {
+					throw new Error(data.error || 'Failed to read file');
+				}
 			}
 
 			viewingFile = {
@@ -740,8 +746,12 @@
 
 			if (isSnapshotMode) {
 				const snapshotParams = new URLSearchParams({ destinationId: String(destinationId), path });
-				res = await fetch(`/api/backup/snapshots/${snapshotId}/browse?${snapshotParams}`);
-				data = await res.json();
+				// Job-polling (readJobResponse) so a slow `restic ls` behind a proxy isn't aborted at ~15s.
+				res = await fetch(`/api/backup/snapshots/${snapshotId}/browse?${snapshotParams}`, { headers: { Accept: 'text/event-stream' } });
+				data = await readJobResponse(res);
+				// A jobified error comes back as { error } with HTTP 200, so surface it explicitly
+				// (the shared `if (!res.ok)` gate below can't see it).
+				if (data?.error) throw new Error(data.error);
 			} else if (isVolumeMode) {
 				res = await fetch(`/api/volumes/${encodeURIComponent(volumeName!)}/browse?${params}`);
 				data = await res.json();

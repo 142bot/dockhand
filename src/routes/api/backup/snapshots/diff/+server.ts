@@ -5,8 +5,9 @@ import { requireBackups } from '$lib/server/backups/route-guards';
 import { diffSnapshots } from '$lib/server/backups';
 import { guardSnapshotEnvAccess } from '$lib/server/backups/route-guards';
 import { validateSnapshotId } from '$lib/server/docker-validation';
+import { jobResult } from '$lib/server/sse';
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
+export const GET: RequestHandler = async ({ url, cookies, request }) => {
 	const auth = await authorize(cookies);
 	const denied = await requireBackups(auth, 'view');
 	if (denied) return denied;
@@ -31,11 +32,6 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	const deniedB = await guardSnapshotEnvAccess(auth, destinationId, snapB);
 	if (deniedB) return deniedB;
 
-	try {
-		const result = await diffSnapshots(destinationId, snapA, snapB);
-		return json(result);
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		return json({ error: msg }, { status: 500 });
-	}
+	// Job-polling: `restic diff` runs two restic reads a proxy would abort at ~15s.
+	return jobResult(request, () => diffSnapshots(destinationId, snapA, snapB));
 };
