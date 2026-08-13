@@ -937,9 +937,15 @@ function parseMfaData(mfaSecret: string | null | undefined): MfaData | null {
 export async function generateMfaSetup(userId: number): Promise<{
 	secret: string;
 	qrDataUrl: string;
-} | null> {
+} | { alreadyEnabled: true } | null> {
 	const user = await getUser(userId);
 	if (!user) return null;
+
+	// Never regenerate over a LIVE enrolment. Overwriting the stored secret + clearing
+	// backupCodes while mfaEnabled stays true locks the account out for good (#1399): the
+	// authenticator holds the old secret, no backup code can match, and login keeps demanding
+	// a code. To re-enrol, the user must disable MFA first (DELETE), then set it up fresh.
+	if (user.mfaEnabled) return { alreadyEnabled: true };
 
 	// Build issuer name with hostname (same as license matching)
 	const hostname = process.env.DOCKHAND_HOSTNAME || os.hostname();

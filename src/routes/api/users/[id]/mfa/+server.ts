@@ -55,10 +55,23 @@ export const POST: RequestHandler = async (event) => {
 			});
 		}
 
+		// Only an explicit setup request regenerates. Treating "anything not verify" as
+		// "regenerate" let a stray/empty POST (a restored tab, a refresh) destroy a live MFA
+		// enrolment (#1399). An empty body still means setup for backward-compat with the current
+		// client, but a body with a DIFFERENT action is rejected rather than silently regenerating.
+		if (body.action && body.action !== 'setup') {
+			return json({ error: `Unknown MFA action "${body.action}"` }, { status: 400 });
+		}
+
 		// Generate new MFA setup
 		const setup = await generateMfaSetup(userId);
 		if (!setup) {
 			return json({ error: 'User not found' }, { status: 404 });
+		}
+		if ('alreadyEnabled' in setup) {
+			// Refuse to overwrite a live enrolment - would lock the user out (#1399). They must
+			// disable MFA first, then set it up again.
+			return json({ error: 'MFA is already enabled. Disable it before setting it up again.' }, { status: 409 });
 		}
 
 		return json({
