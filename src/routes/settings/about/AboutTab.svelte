@@ -851,7 +851,7 @@
 						<div class="text-sm text-destructive">{changelogError}</div>
 					</div>
 				{:else}
-					<div class="space-y-2 max-h-[400px] overflow-y-auto">
+					<div class="space-y-2 max-h-[400px] overflow-y-auto pr-2">
 						{#each changelog as release, index}
 							{@const isExpanded = expandedReleases.has(index)}
 							<div class="border rounded-lg {index === 0 ? 'border-primary/30 bg-primary/5' : ''}">
@@ -935,7 +935,7 @@
 							<div class="w-24 text-center">License</div>
 							<div class="w-8"></div>
 						</div>
-						<div class="max-h-[300px] overflow-y-auto">
+						<div class="max-h-[300px] overflow-y-auto pr-2">
 							{#each filteredDeps as dep}
 								<div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 text-xs px-2 py-1.5 hover:bg-muted/50 rounded items-center">
 									<div class="font-mono text-[11px] truncate" title={dep.name}>{dep.name}</div>
