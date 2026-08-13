@@ -29,6 +29,8 @@ import { sendEventNotification } from '../notifications';
 import type { BackupResult, RestoreResult, ResticRun, BackupTargetType } from './models';
 import type { MetadataFile } from './backup-script';
 import type { DiscoveredVolume } from './discovery-core';
+import type { StackDirProbeHint } from './stackdir-plan';
+import { normalizeBaseDir, stackDirIn } from '../stack-paths';
 import { volumeBind } from './discovery-core';
 import { resolveBindFromMetadata } from './restore-core';
 import { parseSnapshotLsEntries } from './browse-core';
@@ -122,8 +124,7 @@ async function planStackDirVolume(
 	attempts = 7,
 ): Promise<
 	| { kind: 'unknown'; reason: string }
-	| { kind: 'candidate'; syntheticVolume: DiscoveredVolume; volumeKey: string; composeFileName: string; excludePaths: string[]; bindSources: string[] }
-	| { kind: 'tar'; localStackDir: string; composeFileName: string }
+	| { kind: 'candidate'; syntheticVolume: DiscoveredVolume; volumeKey: string; composeFileName: string; excludePaths: string[]; bindSources: string[]; probeHint?: StackDirProbeHint }
 > {
 	const { getStackComposeFile } = await import('../stacks');
 	const { dirname, join, basename } = await import('path');
@@ -174,16 +175,23 @@ async function planStackDirVolume(
 	let envTcpHost: string | null = null;
 	let remoteStacksDir: string | null = null;
 	let isHawser = false;
+	// True when a hawser env had NO remote_stacks_dir set and we fell back to the agent's default
+	// STACKS_DIR (/data/stacks). Steers the probe-fail message: a defaulted path that comes up empty
+	// means the agent stores stacks under a DIFFERENT host dir (e.g. a containerized agent whose
+	// /data/stacks is mounted from another host path), so the user must set the HOST-side path.
+	let remoteStacksDirDefaulted = false;
+	let envName: string | null = null;
 	if (envId != null) {
 		try {
 			const { getEnvironment, getEnvSetting } = await import('../db');
 			const env = await getEnvironment(envId);
 			envConnType = env?.connectionType ?? null;
+			envName = env?.name ?? null;
 			envTcpHost = env?.host && env?.port ? `tcp://${env.host}:${env.port}` : null;
 			isHawser = envConnType === 'hawser-standard' || envConnType === 'hawser-edge';
 			if (envConnType === 'direct') {
 				const rsd = await getEnvSetting('remote_stacks_dir', envId);
-				remoteStacksDir = typeof rsd === 'string' && rsd.trim() ? rsd.trim().replace(/\/+$/, '') : null;
+				remoteStacksDir = typeof rsd === 'string' && rsd.trim() ? normalizeBaseDir(rsd) : null;
 			} else if (isHawser) {
 				// Same `remote_stacks_dir` setting as direct, but for hawser it is a BACKUP-ONLY
 				// declaration of where the AGENT keeps stack files on its host - it does NOT steer
@@ -191,9 +199,9 @@ async function planStackDirVolume(
 				// to bind-mount. Falls back to the agent's default STACKS_DIR (/data/stacks) so a
 				// standard agent needs no configuration.
 				const rsd = await getEnvSetting('remote_stacks_dir', envId);
-				remoteStacksDir = typeof rsd === 'string' && rsd.trim()
-					? rsd.trim().replace(/\/+$/, '')
-					: HAWSER_DEFAULT_STACKS_DIR;
+				const userSet = typeof rsd === 'string' && rsd.trim();
+				remoteStacksDir = userSet ? normalizeBaseDir(rsd) : HAWSER_DEFAULT_STACKS_DIR;
+				remoteStacksDirDefaulted = !userSet;
 			}
 		} catch { /* treat as unknown -> non-local (safe: skips the wrong-host translation) */ }
 	}
@@ -206,9 +214,8 @@ async function planStackDirVolume(
 	// direct env the decision is explicit, not guessed:
 	//   - remote_stacks_dir SET -> the deploy staged the files at <base>/<stack> on the host, so
 	//     that IS the host path (bind-derived can still win below if a bind pins it more exactly).
-	//   - remote_stacks_dir UNSET -> nothing was staged; capture the compose/config from
-	//     Dockhand's OWN copy via a tar into the snapshot (no host bind, so no :ro mask). The
-	//     caller signals this with kind: 'tar'.
+	//   - remote_stacks_dir UNSET -> the host folder can't be located; resolution returns UNKNOWN
+	//     and the backup HARD-FAILS with an actionable message (set a Remote stacks directory).
 	const directRemote = envConnType === 'direct' && !localDaemon;
 	// The working_dir label is only trustworthy for hawser (agent ran compose on its host) or a
 	// LOCAL daemon. For direct-remote it's Dockhand's path, so drop it from the candidates.
@@ -217,10 +224,11 @@ async function planStackDirVolume(
 	// AND hawser. For hawser this is the agent's STACKS_DIR (default /data/stacks) - the DETERMINISTIC
 	// host location, so it wins over the flaky working_dir label (which is "/" for a start-from-stdin
 	// hawser stack). The in-helper probe confirms the compose is actually there.
-	const remoteStacksDirHostPath = (directRemote || isHawser) && remoteStacksDir ? `${remoteStacksDir}/${targetName}` : null;
+	// SAME formula the deploy plan STAGES to (stackDirIn) - deploy WRITES here, backup READS here.
+	const remoteStacksDirHostPath = (directRemote || isHawser) && remoteStacksDir ? stackDirIn(remoteStacksDir, targetName) : null;
 
 	// bind-derived is a PHANTOM empty dir for a direct-remote stdin deploy with no remote_stacks_dir
-	// (see trustBindDerivedForEnv) - distrust it there so resolution falls through to kind:'tar'.
+	// (see trustBindDerivedForEnv) - distrust it there so resolution falls through to UNKNOWN (hard-fail).
 	const trustedBindDerived = trustBindDerivedForEnv(bindDerivedHostPath, { directRemote, hasRemoteStacksDir: !!remoteStacksDir });
 
 	// Fallback host-path candidates (LOCAL daemon only). dataDirHostPath: DATA_DIR -> HOST_DATA_DIR
@@ -243,14 +251,10 @@ async function planStackDirVolume(
 		workingDirLabel: trustedWorkingDirLabel,
 	});
 	if (resolution.kind === 'unknown') {
-		// A direct-REMOTE env with NO remote_stacks_dir has nothing staged on the host, but
-		// Dockhand HAS the stack's compose/config locally - capture it via a tar into the
-		// snapshot instead of hard-failing. (Only compose/config; volume data rides its own
-		// /volumes/<key>. Secrets are never on disk - carried as ciphertext in metadata.)
-		if (directRemote && !remoteStacksDir && dockhandStackDir) {
-			console.log(`[Backup] stackdir plan for "${targetName}": TAR (direct-remote, no remote_stacks_dir) - capturing compose/config from Dockhand's local copy in folder ${dockhandStackDir}`);
-			return { kind: 'tar', localStackDir: dockhandStackDir, composeFileName: composeFileName0 ?? 'docker-compose.yml' };
-		}
+		// Backup ALWAYS reads the stack files from the host where the stack runs - never from
+		// Dockhand's own copy. When the host folder can't be located (a remote env with no
+		// Remote stacks directory / no matching paths), we HARD-FAIL with an actionable message
+		// rather than silently capturing a possibly-stale local copy.
 		// Report every candidate we tried so an UNKNOWN is diagnosable without SSH: which
 		// inputs were null tells us WHY (e.g. workingDir null = 0 containers listed).
 		console.log(`[Backup] stackdir plan for "${targetName}": UNKNOWN reason="${resolution.reason}" dockhandStackDir=${dockhandStackDir ?? 'none'} | connType=${envConnType} localDaemon=${localDaemon} remoteStacksDir=${remoteStacksDir ?? 'null'} containers=${stackContainers.length} bindDerived=${bindDerivedHostPath ?? 'null'} dataDir=${dataDirHostPath ?? 'null'} mount=${mountHostPath ?? 'null'} workingDirLabel=${workingDirLabel ?? 'null'}`);
@@ -293,6 +297,15 @@ async function planStackDirVolume(
 		}
 	}
 
+	// The probe (in the helper) hard-fails when the compose is missing under the mounted host dir.
+	// Give it the context to tell the operator what to DO: a defaulted hawser path that comes up
+	// empty means the agent keeps stacks under a different HOST dir, so the fix is to set the
+	// HOST-side "Remote stack path (for backup)" - NOT to redeploy.
+	const probeHint: StackDirProbeHint =
+		isHawser && remoteStacksDirDefaulted ? { kind: 'hawser-defaulted', hostPath, envName }
+		: (isHawser || directRemote) && remoteStacksDir ? { kind: 'user-set', hostPath, envName }
+		: { kind: 'local' };
+
 	return {
 		kind: 'candidate',
 		syntheticVolume: {
@@ -306,6 +319,7 @@ async function planStackDirVolume(
 		composeFileName,
 		excludePaths,
 		bindSources,
+		probeHint,
 	};
 }
 
@@ -318,13 +332,9 @@ async function planStackDirVolume(
 export async function previewStackBackupPath(
 	targetName: string,
 	envId: number | null | undefined,
-): Promise<{ kind: 'candidate'; hostPath: string; composeFile: string } | { kind: 'tar'; composeFile: string } | { kind: 'unknown'; reason: string }> {
+): Promise<{ kind: 'candidate'; hostPath: string; composeFile: string } | { kind: 'unknown'; reason: string }> {
 	const plan = await planStackDirVolume(targetName, envId);
 	if (plan.kind === 'unknown') return { kind: 'unknown', reason: plan.reason };
-	// TAR mode (direct-remote, no remote_stacks_dir): the stack folder is captured from
-	// Dockhand's own copy into the snapshot, not from a host path. Surface that to the UI so the
-	// preview says "captured from Dockhand" rather than showing a misleading host path.
-	if (plan.kind === 'tar') return { kind: 'tar', composeFile: plan.composeFileName };
 	return { kind: 'candidate', hostPath: plan.syntheticVolume.source ?? '', composeFile: plan.composeFileName };
 }
 
@@ -342,7 +352,6 @@ export async function probeStackDir(
 	envId: number | null | undefined,
 ): Promise<
 	| { kind: 'listed'; hostPath: string; entries: import('./stackdir-plan').StackDirEntry[] }
-	| { kind: 'tar'; localStackDir: string; entries: import('./stackdir-plan').StackDirEntry[] }
 	| { kind: 'helper-failed'; reason: string }
 	| { kind: 'unknown'; reason: string }
 > {
@@ -351,30 +360,14 @@ export async function probeStackDir(
 	const { ensureHelperImage } = await import('./restic');
 	const { INSTANCE_LABEL } = await import('./reap-core');
 
-	// Ask the real capture planner how this stack resolves. TAR mode (direct-remote, no
-	// remote_stacks_dir) has no host folder to mount - the backup streams Dockhand's OWN local
-	// copy (compose/config only; bind data lives on the remote host, out of reach). Surface THAT
-	// to the picker so the user knows exactly what a backup would contain, instead of a bare
-	// "unknown". A `candidate`/`unknown` plan falls through to the host-mount probe below.
+	// Ask the real capture planner how this stack resolves. A `candidate` plan falls through to
+	// the host-mount probe below; an `unknown` plan means the host folder can't be located, so the
+	// picker surfaces that (the user must set the env's stack path).
 	// attempts=1: config-time probe. The stack already exists (the user is editing its backup),
 	// so a not-listable container is legitimately stopped/absent - the 15s just-deployed retry
 	// would only hang the picker. (planStackDirVolume calls collectStackContainerHostInfo ONCE and
 	// returns its bindSources, so the probe does NOT inspect the containers a second time.)
 	const plan = await planStackDirVolume(targetName, envId, undefined, 1);
-	if (plan.kind === 'tar') {
-		const { readdirSync, statSync } = await import('fs');
-		const { join } = await import('path');
-		let entries: import('./stackdir-plan').StackDirEntry[] = [];
-		try {
-			entries = readdirSync(plan.localStackDir).map((name) => {
-				let type: 'dir' | 'file' = 'file'; let size = 0;
-				try { const st = statSync(join(plan.localStackDir, name)); type = st.isDirectory() ? 'dir' : 'file'; size = st.isFile() ? st.size : 0; } catch { /* keep defaults */ }
-				return { name, type, size };
-			}).sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-		} catch { /* empty local copy -> empty list, still tar kind */ }
-		return { kind: 'tar', localStackDir: plan.localStackDir, entries };
-	}
-
 	if (plan.kind === 'unknown') {
 		return { kind: 'unknown', reason: plan.reason };
 	}
@@ -532,12 +525,8 @@ async function collectMetadata(
 	targetName: string,
 	envId: number | null | undefined,
 	volumes: DiscoveredVolume[],
-	stackDirTar?: { localStackDir: string; composeFileName: string } | null,
-): Promise<{ files: MetadataFile[]; stackDirStreamSources?: Array<{ diskPath: string; archivePath: string }> }> {
+): Promise<{ files: MetadataFile[] }> {
 	const files: MetadataFile[] = [];
-	// tar-mode ONLY: disk paths of the stack dir files to stream into the helper (no base64, no
-	// cap). Filled in the stack block below when stackDirTar is set; empty otherwise.
-	const stackDirStreamSources: Array<{ diskPath: string; archivePath: string }> = [];
 	// Writes metadata.json plus, for a stack, a light file listing (path + size, no content)
 	// of the stack dir. The stack dir's bytes are captured by the helper's HOST bind mount
 	// (the synthetic __dockhand_stackdir__ volume from planStackDirVolume), not here.
@@ -582,7 +571,7 @@ async function collectMetadata(
 	if (type === 'stack') {
 		const { getStackComposeFile } = await import('../stacks');
 		const { readFileSync, readdirSync, lstatSync, statSync } = await import('fs');
-		const { dirname, join, relative, basename, sep } = await import('path');
+		const { dirname, join, relative, basename } = await import('path');
 		const compose = await getStackComposeFile(targetName, envId ?? undefined);
 		if (compose.success && compose.composePath) {
 			// Presence of `stackInfo` IS hasStackFiles (derived, not a stored flag that could
@@ -627,22 +616,7 @@ async function collectMetadata(
 					listed.sort((a, b) => a.path.localeCompare(b.path));
 					if (stackInfo) { stackInfo.fileList = listed; stackInfo.excludedBindDirs = excludeRelDirs; }
 
-					if (stackDirTar) {
-						// TAR mode (direct-remote, no remote_stacks_dir): no host bind exists, so the
-						// listed files are STREAMED from disk into the helper at
-						// /volumes/__dockhand_stackdir__/<rel> (O(1) RAM, no cap; restore reads the same
-						// path via stackDirSource). Bind data dirs are excluded (same as listed) - their
-						// runtime bytes live on the target host, out of reach; compose/config only.
-						for (const { path: rel } of listed) {
-							stackDirStreamSources.push({
-								diskPath: join(stackDir, rel),
-								archivePath: `volumes/${STACKDIR_VOLUME_KEY}/${rel.split(sep).join('/')}`,
-							});
-						}
-						console.log(`[Backup] stackfiles "${targetName}": TAR mode - streaming ${stackDirStreamSources.length} file(s) into /volumes/${STACKDIR_VOLUME_KEY} from folder ${stackDir}`);
-					} else {
-						console.log(`[Backup] stackfiles "${targetName}": captured via HOST bind mount at /volumes/${STACKDIR_VOLUME_KEY} - listed ${listed.length} file(s), ${excludeRelDirs.length} bind dir(s) excluded`);
-					}
+					console.log(`[Backup] stackfiles "${targetName}": captured via HOST bind mount at /volumes/${STACKDIR_VOLUME_KEY} - listed ${listed.length} file(s), ${excludeRelDirs.length} bind dir(s) excluded`);
 				} catch (e) {
 					console.warn(`[Backup] stackfiles "${targetName}": listing failed (files still captured via bind):`, e instanceof Error ? e.message : e);
 				}
@@ -663,7 +637,7 @@ async function collectMetadata(
 		}
 	}
 
-	return { files, stackDirStreamSources: stackDirStreamSources.length > 0 ? stackDirStreamSources : undefined };
+	return { files };
 }
 
 // A restic helper runner bound to one destination (so no shared mutable state —

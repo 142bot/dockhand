@@ -498,7 +498,6 @@
 	// picker, but stackPath is still fetched for the compose-file name shown elsewhere.
 	type StackListing =
 		| { kind: 'listed'; hostPath: string; entries: { name: string; type: 'dir' | 'file'; size: number; capturedAs?: 'bind' | 'volume' }[] }
-		| { kind: 'tar'; localStackDir: string; entries: { name: string; type: 'dir' | 'file'; size: number; capturedAs?: 'bind' | 'volume' }[] }
 		| { kind: 'unknown'; reason: string }
 		| null;
 	let stackListing = $state<StackListing>(null);

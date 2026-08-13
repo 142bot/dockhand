@@ -19,8 +19,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runContainerWithStreaming, inspectImage, pullImage, putContainerArchive } from '../docker';
-import { buildTar, buildTarStream, type TarFileSource } from './tar';
-import { putContainerArchiveStreaming } from './put-archive-stream';
+import { buildTar } from './tar';
 import type { MetadataFile } from './backup-script';
 import { getInstanceId } from './identity';
 import { decryptBackupDestination, getSetting } from '../db';
@@ -111,11 +110,6 @@ export interface HelperRunSpec {
 	/** Small in-RAM files (e.g. metadata.json) put-archived into the container BEFORE it
 	 * starts. `path` is the full path from the container root. */
 	metadataFiles?: MetadataFile[];
-	/** tar-mode ONLY (direct-remote, no remote_stacks_dir): the stack dir's files, streamed
-	 * from disk into the helper (O(1) RAM, no cap) alongside metadataFiles in the same
-	 * put-archive. Each source's archivePath is the full container path
-	 * (volumes/__dockhand_stackdir__/<rel>). Empty/absent = no streaming. */
-	stackDirStreamSources?: TarFileSource[];
 }
 
 export class Restic {
@@ -247,21 +241,12 @@ export class Restic {
 		// the container via put-archive (docker cp), NOT the Cmd, so they can't blow
 		// ARG_MAX. The stack dir's bytes ride a read-only host bind mount, not these files.
 		const metadataFiles = spec.metadataFiles ?? [];
-			const streamSources = spec.stackDirStreamSources ?? [];
 			const inlineEntries = metadataFiles.map((f) => ({ path: f.path.replace(/^\/+/, ''), content: Buffer.from(f.contentBase64, 'base64') }));
-			const beforeStart = (metadataFiles.length > 0 || streamSources.length > 0)
+			const beforeStart = metadataFiles.length > 0
 				? async (containerId: string) => {
 					// Each file's `path` is the full path from the container root (e.g.
 					// `metadata/metadata.json`), placing it under the right root.
-					if (streamSources.length > 0) {
-						// tar-mode: STREAM the stack dir files from disk (O(1) RAM, no cap) into the
-						// helper, with metadata.json as inline entries in the same tar. All under `/`.
-						const tar = buildTarStream(streamSources, inlineEntries);
-						const { streamed } = await putContainerArchiveStreaming(containerId, '/', tar, spec.envId);
-						if (!streamed) throw new Error(`tar-mode: transport for env ${spec.envId} cannot stream the stack dir`);
-					} else {
-						await putContainerArchive(containerId, '/', await buildTar(inlineEntries), spec.envId);
-					}
+					await putContainerArchive(containerId, '/', await buildTar(inlineEntries), spec.envId);
 				}
 				: undefined;
 

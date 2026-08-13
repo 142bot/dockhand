@@ -43,7 +43,7 @@ import { EXIT_MARKER } from './restic-script';
 import { parseRetention, buildForgetArgs, checkWouldWipe, retentionActive } from './retention';
 import { liveTargetKey } from './locks';
 import type { DiscoveredVolume } from './discovery-core';
-import { STACKDIR_VOLUME_KEY } from './stackdir-plan';
+import { STACKDIR_VOLUME_KEY, type StackDirProbeHint } from './stackdir-plan';
 
 /** What the service needs from the outside world. All injected for testability. */
 export interface BackupPorts {
@@ -53,18 +53,16 @@ export interface BackupPorts {
 	/** Discover volumes; MUST throw (fail closed) on any inspect failure. */
 	discoverVolumes(containers: Array<{ id: string; name: string }>, envId: number | null | undefined, selected: string[] | null):
 		Promise<{ volumes: DiscoveredVolume[]; skipped: Array<{ type: string; destination: string; reason: string }> }>;
-	/** Decide how a STACK's directory is captured. Normally: locate the HOST folder and build the
-	 * synthetic __dockhand_stackdir__ volume the helper bind-mounts (`kind: 'candidate'`).
-	 * `kind: 'tar'` is the direct-remote-with-no-remote_stacks_dir case: nothing is staged on the
-	 * host, so the compose/config is tarred from Dockhand's local copy instead (no host bind).
-	 * `composeFileName` feeds the in-helper probe (assert the compose is
-	 * visible under the mount). `kind: 'unknown'` means the stack is not compose-managed (no
-	 * working_dir label) -> the caller HARD-FAILS the backup. Logged inside this port. */
+	/** Decide how a STACK's directory is captured: locate the HOST folder and build the synthetic
+	 * __dockhand_stackdir__ volume the helper bind-mounts (`kind: 'candidate'`). The stack files
+	 * are ALWAYS read from the host where the stack runs - never from Dockhand's own copy.
+	 * `composeFileName` feeds the in-helper probe (assert the compose is visible under the mount).
+	 * `kind: 'unknown'` means the host folder can't be located (not compose-managed, or a remote
+	 * env with no Remote stacks directory) -> the caller HARD-FAILS the backup. Logged inside this port. */
 	planStackDirVolume(targetName: string, envId: number | null | undefined, excludedStackFiles?: string[]):
 		Promise<
 			| { kind: 'unknown'; reason: string }
-			| { kind: 'candidate'; syntheticVolume: DiscoveredVolume; volumeKey: string; composeFileName: string; excludePaths: string[]; bindSources: string[] }
-			| { kind: 'tar'; localStackDir: string; composeFileName: string }
+			| { kind: 'candidate'; syntheticVolume: DiscoveredVolume; volumeKey: string; composeFileName: string; excludePaths: string[]; bindSources: string[]; probeHint?: StackDirProbeHint }
 		>;
 	/** Stop the target for a consistent backup; returns a restart closure. */
 	stopForBackup(type: BackupTargetType, targetName: string, containers: Array<{ id: string; name: string; state: string }>, envId: number | null | undefined):
@@ -72,17 +70,14 @@ export interface BackupPorts {
 	/** Run the backup session container; returns the restic run. metadataFiles (metadata.json
 	 * + the light stack-dir listing) are put-archived into /metadata (not the Cmd) so they
 	 * can't blow ARG_MAX. The stack dir's bytes ride a host bind mount, not these files. */
-	runInHelper(spec: { args?: string[]; script: string; binds: string[]; envId: number | null | undefined; name: string; metadataFiles?: MetadataFile[]; stackDirStreamSources?: Array<{ diskPath: string; archivePath: string }>; onStderr?: (line: string) => void; onStdout?: (line: string) => void }):
+	runInHelper(spec: { args?: string[]; script: string; binds: string[]; envId: number | null | undefined; name: string; metadataFiles?: MetadataFile[]; onStderr?: (line: string) => void; onStdout?: (line: string) => void }):
 		Promise<ResticRun>;
 	/** Run a repo-only restic command on the host (verify / retention). */
 	runLocal(args: string[], tier?: 'interactive' | 'data'): Promise<ResticRun>;
 	/** Collect the restore metadata files: metadata.json plus, for a stack, a light file
-	 * listing. The stack dir's bytes normally ride the helper's host bind mount, not these
-	 * files. EXCEPTION - `stackDirTar`: for a direct-remote stack with no remote_stacks_dir
-	 * there is no host bind, so the collector reads localStackDir and tars its files into the
-	 * snapshot at /volumes/__dockhand_stackdir__ (the same path restore reads). */
-	collectMetadata(type: BackupTargetType, targetName: string, envId: number | null | undefined, volumes: DiscoveredVolume[], stackDirTar?: { localStackDir: string; composeFileName: string } | null):
-		Promise<{ files: MetadataFile[]; stackDirStreamSources?: Array<{ diskPath: string; archivePath: string }> }>;
+	 * listing. The stack dir's bytes ride the helper's host bind mount, not these files. */
+	collectMetadata(type: BackupTargetType, targetName: string, envId: number | null | undefined, volumes: DiscoveredVolume[]):
+		Promise<{ files: MetadataFile[] }>;
 	/** The Dockhand host name for restic --host. */
 	host(): string;
 	/** This installation's stable instance id. */
@@ -151,13 +146,10 @@ export class BackupService {
 		// __dockhand_stackdir__ volume). `stackDirProbe` carries what the helper needs to
 		// assert that mount is real (test -f the compose) before restic runs. Null for
 		// containers (no stack dir).
-		let stackDirProbe: { volumeKey: string; composeFileName: string; hostPath?: string } | null = null;
+		let stackDirProbe: { volumeKey: string; composeFileName: string; hostPath?: string; hint?: StackDirProbeHint } | null = null;
 		// restic --exclude paths for compose bind dirs inside the stackdir volume (they are
 		// captured separately as their own /volumes/<key>, honoring volume selection).
 		let stackDirExcludes: string[] = [];
-		// Set (instead of a host bind) for a direct-remote stack with no remote_stacks_dir: the
-		// compose/config is tarred into /metadata from Dockhand's local copy, not the host.
-		let stackDirTar: { localStackDir: string; composeFileName: string } | null = null;
 		try {
 			const t = await this.ports.resolveTargets(job.type, job.targetName, envId);
 			containers = t.containers;
@@ -184,16 +176,11 @@ export class BackupService {
 				if (p.kind === 'unknown') {
 					return this.earlySkipOrError(job, triggeredBy,
 						`Cannot locate the stack folder on the host for "${job.targetName}" (${p.reason}). ` +
-						`For remote environments, set a Remote stacks directory or use matching paths so the stack files exist on the Docker host. ` +
+						`For remote environments, set a Remote stack path (for backup) in Settings > Environments so the stack files exist on the Docker host. ` +
 						`Refusing to write a backup missing the stack's compose and config.`);
-				} else if (p.kind === 'tar') {
-					// direct-remote, no remote_stacks_dir: no host bind (nothing staged), so the
-					// compose/config is captured from Dockhand's local copy into /metadata via a tar.
-					// No synthetic volume, no probe - the metadata collector reads localStackDir.
-					stackDirTar = { localStackDir: p.localStackDir, composeFileName: p.composeFileName };
 				} else {
 					volumes = [...volumes, p.syntheticVolume];
-					stackDirProbe = { volumeKey: p.volumeKey, composeFileName: p.composeFileName, hostPath: p.syntheticVolume.source ?? undefined };
+					stackDirProbe = { volumeKey: p.volumeKey, composeFileName: p.composeFileName, hostPath: p.syntheticVolume.source ?? undefined, hint: p.probeHint };
 					stackDirExcludes = p.excludePaths;
 				}
 			}
@@ -221,7 +208,7 @@ export class BackupService {
 		try {
 			// --- serialize on the destination (share the repo, one at a time) ---
 			return await this.ports.serializeDestination(job.destinationId, () =>
-				this.runLocked(job, triggeredBy, containers, volumes, stackDirProbe, stackDirExcludes, stackDirTar, startTime, releaseOnce));
+				this.runLocked(job, triggeredBy, containers, volumes, stackDirProbe, stackDirExcludes, startTime, releaseOnce));
 		} finally {
 			releaseOnce();
 		}
@@ -237,9 +224,8 @@ export class BackupService {
 		triggeredBy: 'cron' | 'manual' | 'webhook',
 		containers: Array<{ id: string; name: string; state: string }>,
 		volumes: DiscoveredVolume[],
-		stackDirProbe: { volumeKey: string; composeFileName: string } | null,
+		stackDirProbe: { volumeKey: string; composeFileName: string; hostPath?: string; hint?: StackDirProbeHint } | null,
 		stackDirExcludes: string[],
-		stackDirTar: { localStackDir: string; composeFileName: string } | null,
 		startTime: number,
 		releaseLiveTarget: () => void,
 	): Promise<BackupResult> {
@@ -287,7 +273,7 @@ export class BackupService {
 
 			// --- metadata + backup args + session script ---
 			op.progress('metadata', 'Collecting metadata...');
-			const { files: metadata, stackDirStreamSources } = await this.ports.collectMetadata(job.type, job.targetName, envId, volumes, stackDirTar);
+			const { files: metadata } = await this.ports.collectMetadata(job.type, job.targetName, envId, volumes);
 			const instanceId = await this.ports.instanceId();
 			const tags = buildSnapshotTags({ instanceId, configId: job.configId, environmentId: envId, targetName: job.targetName, type: job.type });
 			// Cross-shard identity. If two shards log the SAME instanceId + configId
@@ -295,14 +281,12 @@ export class BackupService {
 			// collide. host() + destinationId show which repo this run targets, so a
 			// CI log across shards reveals any overlap.
 			diag('IDENTITY', `instanceId=${instanceId} host=${this.ports.host()} destId=${job.destinationId} tags=[${tags.join(',')}]`);
-			// restic must back up /volumes/ when there's anything to capture there: real bind/named
-			// volumes (volumes.length), OR a tar-mode stack whose compose/config was put-archived
-			// into /volumes/__dockhand_stackdir__ (no synthetic volume in `volumes`, so it wouldn't
-			// count otherwise - and /metadata-only would silently drop the tarred stack files).
+			// restic backs up /volumes/ when there's anything to capture there: real bind/named
+			// volumes OR the synthetic __dockhand_stackdir__ volume (both are in `volumes`).
 			const args = buildBackupArgs({
 				host: this.ports.host(),
 				tags,
-				hasVolumes: volumes.length > 0 || stackDirTar !== null,
+				hasVolumes: volumes.length > 0,
 				// User excludes PLUS the compose bind dirs inside the stackdir volume (those
 				// ride their own /volumes/<key>, so excluding them here avoids a duplicate and
 				// keeps volume DESELECTION meaningful for in-folder binds).
@@ -381,7 +365,7 @@ export class BackupService {
 			// This flag drives that fallback.
 			let liveStdoutSeen = false;
 			const run = await this.ports.runInHelper({
-				script, binds, envId, name: job.helperName, metadataFiles: metadata, stackDirStreamSources,
+				script, binds, envId, name: job.helperName, metadataFiles: metadata,
 				// Stream restic's own output to the UI LIVE: restic writes its --json
 				// progress (per-file %) to STDOUT and its status messages to STDERR. Wire
 				// BOTH so the log fills in as the backup runs, not all at once at the end.

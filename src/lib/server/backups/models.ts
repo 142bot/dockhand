@@ -296,14 +296,20 @@ export function readConfigIdFromTags(tags: string[]): number | null {
 }
 
 // =============================================================================
-// Timeout tiers — two named tiers, not a per-operation multiplier ladder
+// Timeout tiers
 // =============================================================================
 
-/** Two timeout tiers, in ms. `interactive` for quick repo ops (list/ls/init);
- * `data` for streaming ops that move real bytes (backup/restore/check/prune). */
+/** Restic operations are UNBOUNDED by default (0 = no timeout). A large backup or a
+ * slow listing on a big/remote repo legitimately runs for a long time; a fixed wall-clock
+ * cap killed healthy work mid-run (#1382). A stuck op is handled by manual cancel (the
+ * helper is a named container killed by cancelBackup, and every run shows as `running` in
+ * the execution log) and the helper reaper — the same model backrest/zerobyte use (neither
+ * times out a backup). The two tiers remain so callers can still opt into a cap via env:
+ * `RESTIC_TIMEOUT` (interactive: list/ls/init) and `RESTIC_MAINTENANCE_TIMEOUT`
+ * (data: backup/restore/prune). Both default to 0 (off). */
 export const TIMEOUTS = {
-	interactive: Number(process.env.RESTIC_TIMEOUT ?? 300_000),        // 5 min
-	data: Number(process.env.RESTIC_MAINTENANCE_TIMEOUT ?? 6 * 60 * 60 * 1000), // 6 h
+	interactive: Number(process.env.RESTIC_TIMEOUT ?? 0),
+	data: Number(process.env.RESTIC_MAINTENANCE_TIMEOUT ?? 0),
 } as const;
 
 export type TimeoutTier = keyof typeof TIMEOUTS;

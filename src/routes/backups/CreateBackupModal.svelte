@@ -51,7 +51,6 @@
 	// Stack files on the host (probe listing) — stack targets only.
 	type StackListing =
 		| { kind: 'listed'; hostPath: string; entries: { name: string; type: 'dir' | 'file'; size: number; capturedAs?: 'bind' | 'volume' }[] }
-		| { kind: 'tar'; localStackDir: string; entries: { name: string; type: 'dir' | 'file'; size: number; capturedAs?: 'bind' | 'volume' }[] }
 		| { kind: 'helper-failed'; reason: string }
 		| { kind: 'unknown'; reason: string }
 		| null;

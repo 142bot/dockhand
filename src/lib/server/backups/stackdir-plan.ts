@@ -203,6 +203,17 @@ export function isLocalDaemon(connectionType: string | null, envTcpHost: string 
 	return false;
 }
 
+// Context the in-helper probe-fail message needs to give the operator an ACTIONABLE next step
+// (the fix differs by wiring). `hawser-defaulted`: a hawser env with no remote_stacks_dir fell
+// back to /data/stacks and it came up empty -> the agent stores stacks under a DIFFERENT host dir
+// (e.g. a containerized agent whose /data/stacks is mounted from another host path), so set the
+// HOST-side path. `user-set`: an explicitly-configured host path came up empty -> the path is
+// wrong. `local`: a socket/local-daemon stack -> redeploy staged its files.
+export type StackDirProbeHint =
+	| { kind: 'hawser-defaulted'; hostPath: string; envName: string | null }
+	| { kind: 'user-set'; hostPath: string; envName: string | null }
+	| { kind: 'local' };
+
 /** Result of resolving the candidate host stack folder (before the runtime probe). */
 export type HostStackDirResolution =
 	| { kind: 'candidate'; hostPath: string; composeFile: string; source: string }
