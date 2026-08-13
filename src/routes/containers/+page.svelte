@@ -91,6 +91,7 @@
 	import { parseCustomUrl } from '$lib/utils/custom-url';
 	import { extractTraefikUrls } from '$lib/utils/traefik-urls';
 	import { extractPangolinUrls } from '$lib/utils/pangolin-urls';
+	import { extractCaddyUrls } from '$lib/utils/caddy-urls';
 	import { resolveChangelogUrl } from '$lib/utils/changelog-url';
 	import { detectShells, getBestShell, hasAvailableShell, USER_OPTIONS, getSavedUser, saveUserForContainer, getCustomUsers, removeCustomUser, type ShellDetectionResult } from '$lib/utils/shell-detection';
 	import { DataGrid } from '$lib/components/data-grid';
@@ -1886,7 +1887,8 @@
 						{@const parsedUrl = parseCustomUrl(container.labels?.['dockhand.url'])}
 						{@const traefikUrls = (parsedUrl || !$appSettings.honorProxyLabels) ? [] : extractTraefikUrls(container.labels)}
 						{@const pangolinUrls = (parsedUrl || !$appSettings.honorProxyLabels) ? [] : extractPangolinUrls(container.labels)}
-						{#if ports.length > 0 || exposedPorts.length > 0 || parsedUrl || traefikUrls.length > 0 || pangolinUrls.length > 0}
+						{@const caddyUrls = (parsedUrl || !$appSettings.honorProxyLabels) ? [] : extractCaddyUrls(container.labels)}
+						{#if ports.length > 0 || exposedPorts.length > 0 || parsedUrl || traefikUrls.length > 0 || pangolinUrls.length > 0 || caddyUrls.length > 0}
 							{@const compactPorts = $appSettings.compactPorts}
 							{@const displayPorts = compactPorts && ports.length > 1 ? [ports[0]] : ports}
 							{@const remainingCount = ports.length - 1}
@@ -1935,6 +1937,21 @@
 										<ExternalLink class="w-2.5 h-2.5 opacity-60" />
 									</a>
 								{/each}
+									<!-- caddy-docker-proxy fallback URLs (#1390). dockhand.url suppresses these. -->
+									{#each caddyUrls as c}
+										<a
+											href={c.url}
+											target="_blank"
+											rel="noopener noreferrer"
+											onclick={(e) => e.stopPropagation()}
+											class="inline-flex items-center gap-0.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-1 py-0.5 rounded transition-colors shrink-0"
+											title="Caddy {c.group}: {c.url}"
+										>
+											<Globe class="w-2.5 h-2.5" />
+											<span class="max-w-[120px] truncate">{c.url.replace(/^https?:\/\//, '')}</span>
+											<ExternalLink class="w-2.5 h-2.5 opacity-60" />
+										</a>
+									{/each}
 								{#each displayPorts as port}
 									{@const portParsed = parseCustomUrl(container.labels?.[`dockhand.port.${port.publicPort}.url`])}
 									{@const portUrl = portParsed?.url || null}

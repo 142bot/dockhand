@@ -760,7 +760,7 @@ async function seedDatabase(): Promise<void> {
 	// Create system roles if not exist
 	const adminPermissions = JSON.stringify({
 		containers: ['view', 'create', 'start', 'stop', 'restart', 'remove', 'exec', 'logs', 'inspect'],
-		images: ['view', 'pull', 'push', 'remove', 'build', 'inspect'],
+		images: ['view', 'pull', 'load', 'push', 'remove', 'build', 'inspect'],
 		volumes: ['view', 'create', 'remove', 'inspect'],
 		networks: ['view', 'create', 'remove', 'inspect', 'connect', 'disconnect'],
 		stacks: ['view', 'create', 'start', 'stop', 'remove', 'edit'],
