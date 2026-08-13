@@ -99,6 +99,39 @@
 	// Pull modal state
 	let showPullModal = $state(false);
 
+	// Load-from-tar state
+	let loadFileInput = $state<HTMLInputElement | null>(null);
+	let loadingImage = $state(false);
+
+	async function handleLoadTar(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // reset so re-selecting the same file fires change again
+		if (!file) return;
+
+		loadingImage = true;
+		const t = toast.loading(`Loading ${file.name}...`);
+		try {
+			// Stream the file body straight to the endpoint (no in-memory copy).
+			const response = await fetch(appendEnvParam('/api/images/load', envId), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-tar' },
+				body: file
+			});
+			const data = await response.json();
+			if (data?.success) {
+				toast.success(data.loaded || `Loaded image from ${file.name}`, { id: t });
+				await fetchImages();
+			} else {
+				toast.error(data?.error || 'Failed to load image', { id: t });
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to load image', { id: t });
+		} finally {
+			loadingImage = false;
+		}
+	}
+
 	// Run modal state
 	let showRunModal = $state(false);
 	let prefilledImage = $state('');
@@ -1031,6 +1064,19 @@
 				<Download class="w-3.5 h-3.5 mr-1.5" />
 				Pull
 			</Button>
+			{/if}
+			{#if $canAccess('images', 'load')}
+			<Button size="sm" variant="outline" onclick={() => loadFileInput?.click()} disabled={loadingImage}>
+				<Upload class="w-3.5 h-3.5 mr-1.5" />
+				{loadingImage ? 'Loading...' : 'Load from tar'}
+			</Button>
+			<input
+				bind:this={loadFileInput}
+				type="file"
+				accept=".tar,application/x-tar"
+				class="hidden"
+				onchange={handleLoadTar}
+			/>
 			{/if}
 			<Button size="sm" variant="outline" onclick={fetchImages}>Refresh</Button>
 		</div>

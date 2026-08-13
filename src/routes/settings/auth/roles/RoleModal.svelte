@@ -176,6 +176,7 @@
 		images: [
 			{ key: 'view', label: 'View images' },
 			{ key: 'pull', label: 'Pull images' },
+			{ key: 'load', label: 'Load images from tar' },
 			{ key: 'push', label: 'Push images' },
 			{ key: 'remove', label: 'Remove images' },
 			{ key: 'build', label: 'Build images' },
