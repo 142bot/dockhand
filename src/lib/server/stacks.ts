@@ -37,9 +37,11 @@ import {
 	deleteAutoUpdateSchedule,
 	getAutoUpdateSetting,
 	getStackSourceByComposePath,
-	getSecretProviderById
+	getSecretProviderById,
+	setStackInjectedSecretKeys
 } from './db';
 import { getProvider } from './secretproviders';
+import { resolveComposeDockerHost, buildComposeBaseArgs } from './compose-docker-args';
 import { unregisterSchedule } from './scheduler';
 import { sendEventNotification } from './notifications';
 import { deleteGitStackFiles, parseEnvFileContent } from './git';
@@ -307,6 +309,26 @@ async function readDirFilesAsMap(dirPath: string): Promise<Record<string, string
 	}
 
 	return files;
+}
+
+/**
+ * Stack-dir files for a LIFECYCLE op (start/stop/restart/down) on Hawser.
+ *
+ * Deploy ships the stack dir as stackFiles so the agent materializes the tree and runs
+ * `-f <dir>/compose.yaml`; the lifecycle ops didn't, so the agent fell back to `-f -`
+ * (stdin) and any include:/sibling file the compose references was ABSENT on the agent,
+ * breaking down/stop (#1240). Give them the same map. Ignored by local/socket/direct
+ * (executeLocalCompose has no stackFiles param); only the Hawser branch consumes it.
+ * Best-effort: a missing/unreadable dir returns undefined -> exact prior behavior.
+ */
+async function lifecycleStackFiles(stackDir?: string): Promise<Record<string, string> | undefined> {
+	if (!stackDir || !existsSync(stackDir)) return undefined;
+	try {
+		const files = await readDirFilesAsMap(stackDir);
+		return Object.keys(files).length > 0 ? files : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 // =============================================================================
@@ -1001,7 +1023,10 @@ async function executeLocalCompose(
 	build?: boolean,
 	noBuildCache?: boolean,
 	pullPolicy?: string,
-	remoteProjectDir?: string
+	// direct-remote only: when the stack folder was staged to <remoteStackHostDir> on the target
+	// host, rewrite the compose's same-dir relative binds (`./x`) to <remoteStackHostDir>/x so the
+	// remote daemon binds the staged files. undefined = no staging, compose unchanged.
+	remoteStackHostDir?: string
 ): Promise<StackOperationResult> {
 	const logPrefix = `[Stack:${stackName}]`;
 
@@ -1060,6 +1085,19 @@ async function executeLocalCompose(
 		}
 	}
 
+	// direct-remote: the stack folder was copied to <remoteStackHostDir> on the target host, so
+	// rewrite same-dir relative binds (`./x`) to <remoteStackHostDir>/x. This resolves them on the
+	// remote daemon without --project-directory (which would break `include:`). include stays local.
+	if (remoteStackHostDir) {
+		const { rewriteBindsToHostDir } = await import('./remote-staging-plan');
+		const rw = rewriteBindsToHostDir(finalComposeContent, remoteStackHostDir);
+		if (rw.modified) {
+			finalComposeContent = rw.content;
+			console.log(`${logPrefix} direct env: rewrote ${rw.changes.length} relative bind(s) to the staged host dir:`);
+			for (const change of rw.changes) console.log(`${logPrefix}${change}`);
+		}
+	}
+
 	// Build spawn environment with ONLY essential system variables.
 	// CRITICAL: Do NOT spread process.env! Docker Compose shell env has higher
 	// priority than --env-file, so Dockhand's vars would override user's .env values.
@@ -1068,17 +1106,27 @@ async function executeLocalCompose(
 		HOME: process.env.HOME || '/root',
 	};
 
-	// Docker connection config
-	if (dockerHost) {
-		spawnEnv.DOCKER_HOST = dockerHost;
-	} else if (process.env.DOCKER_HOST) {
-		spawnEnv.DOCKER_HOST = process.env.DOCKER_HOST;
-	}
+	// Docker connection config. Pass the daemon via the `docker -H` CLI FLAG (built
+	// into `args` below), NOT via DOCKER_HOST in the shell env: shell env leaks into
+	// services that pass through or interpolate DOCKER_HOST (e.g. a socket-proxy
+	// sidecar), overriding the value the stack set for itself (#1393). `-H` connects
+	// compose to the right daemon without polluting the compose interpolation env.
+	const composeDockerHost = resolveComposeDockerHost(dockerHost, process.env.DOCKER_HOST);
 
 	// Honor explicit DOCKER_API_VERSION override from environment (user-controlled).
 	// Otherwise let compose negotiate natively — 5.0.2 handles old daemons correctly.
 	if (process.env.DOCKER_API_VERSION) {
 		spawnEnv.DOCKER_API_VERSION = process.env.DOCKER_API_VERSION;
+	}
+
+	// DOCKER_CONFIG points the Docker CLI at its config dir (where `docker login` writes
+	// credentials). loginToRegistries() runs with the full process env and writes to
+	// $DOCKER_CONFIG/config.json; without passing it through here, compose would read from
+	// $HOME/.docker instead and every private-image pull falls back to anonymous -> 401
+	// (#1376). It's a CLI-config var, not a Compose interpolation var, so it can't collide
+	// with user .env values - safe to allow-list next to the other DOCKER_* vars.
+	if (process.env.DOCKER_CONFIG) {
+		spawnEnv.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
 	}
 
 	// Check if .env file exists on disk (for legacy support decision)
@@ -1153,16 +1201,9 @@ async function executeLocalCompose(
 	// Build command based on operation
 	// If we have modified compose content (host path translation), use stdin instead of file
 	const useStdin = finalComposeContent !== composeContent;
-	const args = ['docker', 'compose', '-p', stackName];
-
-	// For a `direct` remote daemon we can't share Dockhand's filesystem, so relative binds
-	// (./config, ./data) are staged onto the remote host under `remoteProjectDir` and the
-	// compose is pointed there with --project-directory: compose resolves `./x` against that
-	// remote path (which need not exist locally) instead of the client cwd, so the daemon
-	// binds the staged files. undefined = current behavior (no staging, no flag).
-	if (remoteProjectDir) {
-		args.push('--project-directory', remoteProjectDir);
-	}
+	// `-H` is a GLOBAL docker flag, so it goes before `compose`. This connects to the
+	// daemon without putting DOCKER_HOST in the shell env (#1393 - see above).
+	const args = buildComposeBaseArgs(stackName, composeDockerHost);
 
 	// Temp file for path-translated override content (cleaned up in finally block)
 	let tempOverridePath: string | undefined;
@@ -1191,12 +1232,6 @@ async function executeLocalCompose(
 			args.push('-f', overrideFile);
 			console.log(`${logPrefix} Including override file: ${basename(overrideFile)}`);
 		}
-	} else if (remoteProjectDir) {
-		// Internal stack + remote staging: --project-directory repoints compose's base to the
-		// remote path, which breaks the usual cwd auto-discovery of compose.yaml (that file is
-		// on Dockhand's host, not under the remote project dir). Point -f at the local file
-		// explicitly so compose reads it locally while resolving ./binds against the remote dir.
-		args.push('-f', composeFile);
 	}
 	// else: internal stack without path translation - no -f needed.
 	// Docker Compose auto-discovers compose.yaml + compose.override.yaml from cwd.
@@ -1711,31 +1746,31 @@ async function executeComposeCommand(
 				skipVerify: env.tlsSkipVerify ?? false
 			} : undefined;
 
-			// A direct daemon shares no filesystem with Dockhand, so relative binds
-			// (./config, ./data) would resolve to a path the remote daemon can't see and
-			// Docker would auto-create empty dirs. When the env has a `remote_stacks_dir`
-			// set AND the compose has relative binds, stage the stack files onto the remote
-			// host under <remoteDir>/<stack> and point compose there with --project-directory.
-			// The plan() decides IF/WHERE (pure, unit-tested); anything it declines takes the
-			// exact current path (remoteProjectDir stays undefined = no flag, no staging).
-			let remoteProjectDir: string | undefined;
+			// A `direct` env with a `remote_stacks_dir` set gets its WHOLE stack folder
+			// (compose + includes + .env + sibling config) copied onto the target host under
+			// <remoteDir>/<stack>, so the backup helper can bind-mount it there. This is
+			// When the env has a `remote_stacks_dir`, Dockhand copies the whole stack folder to
+			// <remoteDir>/<stack> on the target host so the backup helper can read it AND so the
+			// compose's same-dir relative binds (`./data`) can be rewritten to that absolute host
+			// path (done inside executeLocalCompose). This resolves relative binds on the remote
+			// daemon WITHOUT --project-directory (which would break `include:`). No remote_stacks_dir
+			// -> nothing staged, compose unchanged: relative binds resolve against the local cwd
+			// (1.0.37 behavior), absolute/named binds work.
+			let remoteStackHostDir: string | undefined;
 			{
 				const { getEnvSetting } = await import('./db');
 				const { planRemoteStaging } = await import('./remote-staging-plan');
 				const remoteStacksDir = await getEnvSetting('remote_stacks_dir', envId ?? undefined);
-				// Stage the WHOLE local stack dir (compose + relative-bind files like nginx.conf,
-				// ./data). The local stack dir is config-only - runtime data written by the remote
-				// container never comes back here - so this can't clobber live data. The tar is
-				// STREAMED from disk (O(1) RAM), so a large ./data doesn't buffer in memory.
+				// The tar is STREAMED from disk (O(1) RAM), so a large stack dir doesn't buffer.
 				const hasLocalDir = !!(operation === 'up' && workingDir && existsSync(workingDir));
 				const plan = planRemoteStaging({
 					operation, remoteStacksDir, stackName, composeContent, hasStackFiles: hasLocalDir,
 				});
-				if (plan.stage && plan.projectDir && workingDir) {
+				if (plan.stage && plan.hostDir && workingDir) {
 					const { stageStackDirOnRemote } = await import('./stage-remote-stackfiles');
-					const { staged } = await stageStackDirOnRemote(envId!, plan.projectDir, workingDir);
-					console.log(`[Stack:${stackName}] direct env: staged ${staged} file(s) to ${plan.projectDir} on the remote host (${plan.reason})`);
-					remoteProjectDir = plan.projectDir;
+					const { staged } = await stageStackDirOnRemote(envId!, plan.hostDir, workingDir);
+					console.log(`[Stack:${stackName}] direct env: staged ${staged} file(s) to ${plan.hostDir} on the remote host (${plan.reason})`);
+					remoteStackHostDir = plan.hostDir;
 				}
 			}
 
@@ -1758,7 +1793,7 @@ async function executeComposeCommand(
 				build,
 				noBuildCache,
 				pullPolicy,
-				remoteProjectDir
+				remoteStackHostDir
 			);
 		}
 
@@ -2247,7 +2282,7 @@ export async function startStack(
 	// via getStackComposeFile/getStackSource) to avoid a redundant DB lookup.
 	const isGitStack = result.sourceType === 'git';
 
-	const opts: ComposeCommandOptions = { stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack };
+	const opts: ComposeCommandOptions = { stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack, stackFiles: await lifecycleStackFiles(result.stackDir) };
 
 	// Check if containers exist for this stack. If they do, use 'start' to resume
 	// them (preserves container IDs, avoids Traefik race conditions from recreation).
@@ -2295,7 +2330,7 @@ export async function stopStack(
 
 	const composeResult = await executeComposeCommand(
 		'stop',
-		{ stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack },
+		{ stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack, stackFiles: await lifecycleStackFiles(result.stackDir) },
 		result.content!,
 		result.nonSecretVars,
 		result.secretVars
@@ -2336,7 +2371,7 @@ export async function restartStack(
 	// sourceType is plumbed through from requireComposeFile to avoid a redundant DB lookup.
 	const isGitStack = result.sourceType === 'git';
 
-	const opts: ComposeCommandOptions = { stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack };
+	const opts: ComposeCommandOptions = { stackName, envId, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack, stackFiles: await lifecycleStackFiles(result.stackDir) };
 
 	let composeResult: StackOperationResult;
 
@@ -2377,7 +2412,7 @@ export async function downStack(
 
 	const composeResult = await executeComposeCommand(
 		'down',
-		{ stackName, envId, removeVolumes, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack },
+		{ stackName, envId, removeVolumes, workingDir: result.stackDir, composePath: result.composePath, envPath: result.envPath, useOverrideFile: isGitStack, stackFiles: await lifecycleStackFiles(result.stackDir) },
 		result.content!,
 		result.nonSecretVars,
 		result.secretVars
@@ -2521,11 +2556,12 @@ export async function removeStack(
 			if (deleteFiles && envId != null) {
 				try {
 					const { getEnvironment, getEnvSetting } = await import('./db');
+					const { normalizeBaseDir, stackDirIn } = await import('./stack-paths');
 					const env = await getEnvironment(envId);
 					if (env?.connectionType === 'direct') {
 						const remoteStacksDir = await getEnvSetting('remote_stacks_dir', envId);
-						const base = typeof remoteStacksDir === 'string' ? remoteStacksDir.trim().replace(/\/+$/, '') : '';
-						if (base) console.log(`[Stack:${stackName}] leaving staged files at ${base}/${stackName} on the remote host (not deleting - may hold user data)`);
+						const base = typeof remoteStacksDir === 'string' && remoteStacksDir.trim() ? normalizeBaseDir(remoteStacksDir) : '';
+						if (base) console.log(`[Stack:${stackName}] leaving staged files at ${stackDirIn(base, stackName)} on the remote host (not deleting - may hold user data)`);
 					}
 				} catch { /* log-only, never blocks removal */ }
 			}
@@ -2860,6 +2896,9 @@ export async function deployStack(options: DeployStackOptions): Promise<StackOpe
 			} else {
 				// Default: compose file should already exist (written by saveStackComposeFile)
 				workingDir = await getStackDir(name, envId);
+				// Point at the default .env in the stack dir so its content (e.g. a
+				// bulk secret selector) reaches resolveProviderEnvVars below.
+				actualEnvPath = join(workingDir, '.env');
 				console.log(`${logPrefix} Using internal stack directory:`, workingDir);
 			}
 
@@ -2902,7 +2941,8 @@ export async function deployStack(options: DeployStackOptions): Promise<StackOpe
 			initialSecretVars,
 			logPrefix,
 			source?.secretProviderId,
-			envFileContent
+			envFileContent,
+			{ stackName: name, envId }
 		);
 		console.log(`${logPrefix} DB non-secret override vars:`, Object.keys(dbNonSecretVars).length);
 		console.log(`${logPrefix} DB secret vars:`, Object.keys(secretVars).length);
@@ -3232,6 +3272,10 @@ export async function saveStackEnvVars(
 interface EnrichedEnvVars {
 	dbNonSecretVars: Record<string, string>;
 	secretVars: Record<string, string>;
+	// Names (no values) of secret keys pulled/resolved from the bound provider this
+	// deploy - bulk keys and inline refs promoted to secrets. Container inspect masks
+	// these; they are not in stack_env_vars, so getSecretKeysToMask can't see them.
+	injectedProviderKeys: string[];
 }
 
 // Variable names that trigger a bulk pull. OP_ENVIRONMENT_ID is retained for
@@ -3243,9 +3287,29 @@ async function resolveProviderEnvVars(
 	secretVars: Record<string, string>,
 	logPrefix: string,
 	secretProviderId?: number | null,
-	stackEnvFileContent?: string
+	stackEnvFileContent?: string,
+	persistTo?: { stackName: string; envId: number | null | undefined }
 ): Promise<EnrichedEnvVars> {
 	const envFileVars = stackEnvFileContent ? parseEnvFileContent(stackEnvFileContent) : {};
+
+	// Keys already present as DB secrets on entry; anything in secretVars beyond
+	// these at the end is provider-injected (bulk pull or promoted inline ref).
+	const dbSecretKeysOnEntry = new Set(Object.keys(secretVars));
+	const injectedProviderKeys = (): string[] =>
+		Object.keys(secretVars).filter((k) => !dbSecretKeysOnEntry.has(k));
+
+	// Persist the provider-injected key NAMES (no values) so container inspect can
+	// mask them. Done HERE, the single resolution choke point, so no caller can
+	// forget it (the primary deployStack path used to). Best-effort: a persist
+	// failure must never block a deploy.
+	const persistInjectedKeys = async () => {
+		if (!persistTo) return;
+		try {
+			await setStackInjectedSecretKeys(persistTo.stackName, persistTo.envId, injectedProviderKeys());
+		} catch (err) {
+			console.warn(`${logPrefix} Failed to persist injected secret key names:`, err);
+		}
+	};
 
 	const providerRow = secretProviderId ? await getSecretProviderById(secretProviderId) : undefined;
 	const provider = providerRow ? getProvider(providerRow.type) : undefined;
@@ -3310,12 +3374,14 @@ async function resolveProviderEnvVars(
 	for (const ref of envFileRefs.values()) refs.add(ref);
 
 	if (refs.size === 0) {
-		return { dbNonSecretVars, secretVars };
+		await persistInjectedKeys();
+		return { dbNonSecretVars, secretVars, injectedProviderKeys: injectedProviderKeys() };
 	}
 
 	if (!providerRow || !provider) {
 		console.warn(`${logPrefix} Found ${refs.size} reference(s) but no usable secret provider is bound to this stack; leaving them as literals`);
-		return { dbNonSecretVars, secretVars };
+		await persistInjectedKeys();
+		return { dbNonSecretVars, secretVars, injectedProviderKeys: injectedProviderKeys() };
 	}
 
 	let refMap: Map<string, string>;
@@ -3358,7 +3424,8 @@ async function resolveProviderEnvVars(
 
 	console.log(`${logPrefix} ${provider.label} resolved ${refMap.size}/${refs.size} reference(s) (promoted from DB: ${promotedFromDb}, from .env: ${promotedFromEnvFile})`);
 
-	return { dbNonSecretVars, secretVars };
+	await persistInjectedKeys();
+	return { dbNonSecretVars, secretVars, injectedProviderKeys: injectedProviderKeys() };
 }
 
 /**
@@ -3390,7 +3457,8 @@ async function applyProviderSecretsToComposeResult(
 		{ ...result.secretVars },
 		logPrefix,
 		source?.secretProviderId,
-		envFileContent
+		envFileContent,
+		{ stackName, envId: envId ?? undefined }
 	);
 	result.nonSecretVars = dbNonSecretVars;
 	result.secretVars = secretVars;

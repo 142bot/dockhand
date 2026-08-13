@@ -68,7 +68,6 @@
 	} from 'lucide-svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Alert from '$lib/components/ui/alert';
-	import * as Popover from '$lib/components/ui/popover';
 	import IconPicker from '$lib/components/icon-picker.svelte';
 	import AvatarCropper from '$lib/components/AvatarCropper.svelte';
 	import { isCustomIcon } from '$lib/utils/icons';
@@ -297,9 +296,9 @@
 	let formDiskWarningThreshold = $state(80);
 	let formDiskWarningThresholdGb = $state(50);
 	let formConnectionType = $state<ConnectionType>('socket');
-	// Envs that keep stack files on a REMOTE host, so backup needs a declared stack path:
-	// direct (Dockhand stages there, drives deploy + backup) and hawser (the agent keeps files
-	// at its STACKS_DIR; the path is backup-only, does not steer deploy).
+	// Envs that keep stack files on a REMOTE host, so backup needs a declared stack path.
+	// For hawser it is backup-only (the agent owns its STACKS_DIR). For direct it also drives
+	// deploy: Dockhand copies the folder there and rewrites relative binds to that host path.
 	const usesStackPath = (ct: ConnectionType) => ct === 'direct' || ct === 'hawser-standard' || ct === 'hawser-edge';
 	const isHawserConn = (ct: ConnectionType) => ct === 'hawser-standard' || ct === 'hawser-edge';
 	let formHawserToken = $state('');
@@ -1782,13 +1781,11 @@
 						<div class="space-y-2">
 							<div class="flex items-center gap-1.5">
 								<Label for="edit-env-connection-type">Connection type</Label>
-								<Popover.Root>
-									<Popover.Trigger>
-										<button type="button" class="text-muted-foreground hover:text-foreground">
-											<HelpCircle class="w-3.5 h-3.5" />
-										</button>
-									</Popover.Trigger>
-									<Popover.Content class="w-80 text-sm z-[200]" side="right">
+								<Tooltip.Root>
+									<Tooltip.Trigger type="button" class="text-muted-foreground hover:text-foreground">
+										<HelpCircle class="w-3.5 h-3.5" />
+									</Tooltip.Trigger>
+									<Tooltip.Content class="w-80 text-sm z-[200]" side="right">
 										<div class="space-y-3">
 											<div class="flex items-start gap-2">
 												<Unplug class="w-4 h-4 mt-0.5 text-cyan-500 shrink-0" />
@@ -1823,8 +1820,8 @@
 												Learn more about Hawser
 											</a>
 										</div>
-									</Popover.Content>
-								</Popover.Root>
+									</Tooltip.Content>
+								</Tooltip.Root>
 							</div>
 							<Select.Root type="single" value={formConnectionType} onValueChange={(v) => {
 								formConnectionType = v as ConnectionType;
@@ -1947,12 +1944,12 @@
 							</div>
 						{/if}
 
-						<!-- Stack path for backup (direct = also drives deploy; hawser = backup-only) -->
+						<!-- Stack path: hawser = backup-only; direct = backup + relative-bind rewrite on deploy -->
 						{#if usesStackPath(formConnectionType)}
 							<div class="space-y-2">
 								<div class="flex items-center gap-1.5">
 									<Label for="edit-env-remote-stacks-dir">
-										{isHawserConn(formConnectionType) ? 'Remote stack path (for backup)' : 'Remote stacks directory'}
+										Remote stack path (for backup)
 										<span class="text-muted-foreground font-normal">(optional)</span>
 									</Label>
 									<Tooltip.Root>
@@ -1976,23 +1973,28 @@
 														(default <code class="bg-muted px-1 rounded">/data/stacks</code>). Leave empty for
 														the default; set it only if the agent runs with a custom one.
 													</p>
+													<p class="text-muted-foreground">
+														This must be a <span class="font-medium text-foreground">real path on the agent's host</span>
+														where the stack files actually live.
+													</p>
 												</div>
 											{:else}
 												<div class="space-y-2">
-													<p class="font-medium">How this path is used</p>
+													<p class="font-medium">Where this stack's files live on the host</p>
 													<p class="text-muted-foreground">
-														A direct daemon shares no filesystem with Dockhand. When set, Dockhand
-														materialises each stack's whole folder - compose, <code class="bg-muted px-1 rounded">.env</code>,
-														and relative-bind files (<code class="bg-muted px-1 rounded">./config</code>,
-														<code class="bg-muted px-1 rounded">./data</code>) - into
+														A direct daemon shares no filesystem with Dockhand. When set, Dockhand copies each
+														stack's folder to
 														<code class="bg-muted px-1 rounded">&lt;this path&gt;/&lt;stack&gt;</code>
-														<span class="font-medium text-foreground">on the remote host</span>, and runs compose there
-														via <code class="bg-muted px-1 rounded">--project-directory</code>.
+														<span class="font-medium text-foreground">on the remote host</span> so the backup
+														helper can read the compose and config, and rewrites relative binds
+														(<code class="bg-muted px-1 rounded">./data</code>) to that host path so they resolve
+														on the remote daemon.
 													</p>
 													<p class="text-muted-foreground">
-														This applies to normal stacks and git sync alike, so relative binds resolve
-														and every stack is backupable. Leave empty to use only named volumes or
-														absolute paths.
+														Leave empty to skip this: the stack won't be backupable and a relative bind resolves
+														to a path only Dockhand can see. Use
+														<span class="font-medium text-foreground">absolute paths</span> or
+														<span class="font-medium text-foreground">named volumes</span> instead.
 													</p>
 												</div>
 											{/if}
@@ -2009,8 +2011,9 @@
 										Absolute path on the agent's host where it keeps stack folders. Used only to back up
 										each stack's compose and config. Leave empty for the default <code class="bg-muted px-1 rounded">/data/stacks</code>.
 									{:else}
-										Absolute path on the remote host where Dockhand stages each stack's files before deploying.
-										Set it for stacks with relative binds, or to keep stacks backupable on a remote direct daemon.
+										Absolute path on the remote host where Dockhand keeps this stack's files, so its compose
+										and config are backupable and relative binds resolve on the remote daemon. Leave empty to
+										use only absolute paths or named volumes.
 									{/if}
 								</p>
 							</div>
