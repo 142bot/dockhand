@@ -69,6 +69,7 @@ const EMPTY_PERMISSIONS: Permissions = {
 	audit_logs: [],
 	activity: [],
 	schedules: [],
+	secrets: [],
 	backups: []
 };
 
@@ -364,6 +365,7 @@ export async function getUserPermissionsById(userId: number): Promise<Permission
 		audit_logs: [],
 		activity: [],
 		schedules: [],
+		secrets: [],
 		backups: []
 	};
 
@@ -446,6 +448,7 @@ export async function getUserPermissionsForEnvironment(userId: number, environme
 		audit_logs: [],
 		activity: [],
 		schedules: [],
+		secrets: [],
 		backups: []
 	};
 
