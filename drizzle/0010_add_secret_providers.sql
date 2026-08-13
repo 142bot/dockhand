@@ -8,4 +8,5 @@ CREATE TABLE `secret_providers` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `secret_providers_name_unique` ON `secret_providers` (`name`);--> statement-breakpoint
-ALTER TABLE `stack_sources` ADD `secret_provider_id` integer REFERENCES secret_providers(id) ON DELETE SET NULL;
+ALTER TABLE `stack_sources` ADD `secret_provider_id` integer REFERENCES secret_providers(id) ON DELETE SET NULL;--> statement-breakpoint
+ALTER TABLE `stack_sources` ADD `injected_secret_keys` text;

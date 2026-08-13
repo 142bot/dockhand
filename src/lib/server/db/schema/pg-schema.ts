@@ -357,6 +357,9 @@ export const stackSources = pgTable('stack_sources', {
 	composePath: text('compose_path'), // Custom path to compose file (for stacks with non-default location)
 	envPath: text('env_path'), // Custom path to .env file (for stacks with non-default location)
 	secretProviderId: integer('secret_provider_id').references(() => secretProviders.id, { onDelete: 'set null' }),
+	// Names (no values) of secret keys injected from the bound provider on the last
+	// deploy, so container inspect can mask them without a live provider call.
+	injectedSecretKeys: text('injected_secret_keys'),
 	createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
 	updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow()
 }, (table) => ({

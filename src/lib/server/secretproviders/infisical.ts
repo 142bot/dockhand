@@ -18,6 +18,7 @@
 
 import { request } from 'undici';
 import type { InfisicalConfig, SecretProvider, TestConnectionResult } from './shared';
+import { assertSafeProviderHost, parseProviderError } from './shared';
 import { UnsupportedOperationError } from './shared';
 
 /** Shape of a single secret in the /api/v3/secrets/raw response. */
@@ -33,6 +34,7 @@ interface RawSecretsResponse {
 
 /** Strips a trailing slash so `${base}${path}` never doubles up. */
 function baseUrl(host: string): string {
+	assertSafeProviderHost(host, 'Infisical');
 	return host.replace(/\/$/, '');
 }
 
@@ -91,12 +93,15 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 					headers: { authorization: `Bearer ${token}` }
 				}
 			);
-			// Always drain the body so undici can reuse the connection.
-			await body.text().catch(() => '');
+			// Drain the body; on failure log it server-side and show the client only a
+			// message parsed from Infisical's own {message}/{messages} shape.
+			const rawBody = await body.text().catch(() => '');
 			if (statusCode >= 200 && statusCode < 300) {
 				return { ok: true };
 			}
-			return { ok: false, error: `Infisical returned HTTP ${statusCode}` };
+			if (rawBody) console.warn(`[Infisical] testConnection ${statusCode}: ${rawBody}`);
+			const safe = parseProviderError(rawBody);
+			return { ok: false, error: `Infisical returned HTTP ${statusCode}${safe ? `: ${safe}` : ''}` };
 		} catch (e: unknown) {
 			const message = e instanceof Error ? e.message : String(e);
 			return { ok: false, error: message || 'Connection failed' };
@@ -138,11 +143,10 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 		);
 
 		if (statusCode < 200 || statusCode >= 300) {
-			// Drain the body so the connection can be reused, then surface the status.
+			// Drain the body, log it server-side, but never reflect it to the client.
 			const detail = await body.text().catch(() => '');
-			throw new Error(
-				`[Infisical] Bulk pull failed with HTTP ${statusCode}${detail ? `: ${detail}` : ''}`
-			);
+			if (detail) console.warn(`[Infisical] bulk pull ${statusCode}: ${detail}`);
+			throw new Error(`[Infisical] Bulk pull failed with HTTP ${statusCode}`);
 		}
 
 		const payload = (await body.json()) as RawSecretsResponse;

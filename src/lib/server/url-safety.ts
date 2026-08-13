@@ -58,14 +58,46 @@ export function isSafeNotificationUrl(raw: string): { ok: boolean; reason?: stri
  */
 export type IpCategory = 'loopback' | 'metadata' | 'private' | 'reserved';
 
+/**
+ * Extract the embedded IPv4 dotted-quad from an IPv4-mapped/compatible IPv6 host,
+ * or null. `new URL()` normalizes `::ffff:1.2.3.4` to the HEX form `::ffff:102:304`,
+ * so a regex on the dotted form alone is dead on the real code path — every mapped
+ * address must be canonicalized from its hextets. Handles the compressed
+ * `::ffff:HHHH:HHHH`, the fully-expanded `0:0:0:0:0:ffff:HHHH:HHHH`, the
+ * `::ffff:0:HHHH:HHHH` (v4-translated), and the deprecated IPv4-compatible
+ * `::HHHH:HHHH` / `::a.b.c.d`. The last two 16-bit hextets carry the 32-bit v4.
+ */
+function embeddedV4(h: string): string | null {
+	// Trailing dotted quad after a v4-mapped/compatible prefix, in either the
+	// compressed (::ffff:1.2.3.4) or fully-expanded (0:0:0:0:0:ffff:1.2.3.4) form.
+	const dotted = h.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+	if (dotted && /^(::ffff:|::ffff:0:|::|(0:){5}ffff:|(0:){4}0:ffff:)/.test(h)) {
+		return dotted[1];
+	}
+	// Hex-hextet v4-mapped/compatible forms. Take the last two colon-separated
+	// groups as the 32-bit v4 IFF the address is one of the embedded-v4 shapes.
+	const isMapped =
+		/^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
+		/^::ffff:0:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
+		/^(0:){5}ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
+		/^::[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h); // deprecated v4-compatible ::a:b
+	if (!isMapped) return null;
+	const groups = h.split(':').filter((g) => g.length > 0);
+	if (groups.length < 2) return null;
+	const hi = parseInt(groups[groups.length - 2], 16);
+	const lo = parseInt(groups[groups.length - 1], 16);
+	if (Number.isNaN(hi) || Number.isNaN(lo)) return null;
+	return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
 export function ipCategory(host: string): IpCategory | null {
 	const h = host.toLowerCase().replace(/^\[|\]$/g, '');
-	// IPv6 loopback, then link-local / unique-local (treated as private).
+	// IPv6 loopback / unspecified, then link-local / unique-local (private).
 	if (h === '::1') return 'loopback';
+	if (h === '::' || h === '::0') return 'reserved'; // unspecified / all-interfaces
 	if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return 'private';
-	// IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
-	const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-	const v4 = mapped ? mapped[1] : h;
+	// IPv4-mapped/compatible IPv6 — judge the embedded v4 (see embeddedV4).
+	const v4 = embeddedV4(h) ?? h;
 	const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
 	if (m) {
 		const [a, b] = [Number(m[1]), Number(m[2])];

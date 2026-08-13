@@ -15,6 +15,7 @@
 
 import { request } from 'undici';
 import type { ConnectConfig, SecretProvider, TestConnectionResult } from './shared';
+import { assertSafeProviderHost } from './shared';
 import { UnsupportedOperationError } from './shared';
 
 /** A vault as returned by GET /v1/vaults. */
@@ -72,6 +73,7 @@ class ReferenceNotFoundError extends Error {
 
 /** Normalises a host URL into the Connect v1 API base (no trailing slash). */
 function baseUrl(host: string): string {
+	assertSafeProviderHost(host, '1Password Connect');
 	return `${host.replace(/\/$/, '')}/v1`;
 }
 
@@ -132,8 +134,11 @@ async function connectGet<T>(
 		return undefined;
 	}
 	if (statusCode < 200 || statusCode >= 300) {
-		const detail = await body.text();
-		throw new Error(`1Password Connect request failed (${statusCode}): ${detail || 'no body'}`);
+		// Log the raw body server-side only; the thrown message (which reaches the
+		// deploy job / client) carries just the status, never arbitrary upstream bytes.
+		const detail = await body.text().catch(() => '');
+		if (detail) console.warn(`[1Password Connect] request ${statusCode}: ${detail}`);
+		throw new Error(`1Password Connect request failed (${statusCode})`);
 	}
 	return (await body.json()) as T;
 }
@@ -251,9 +256,13 @@ export const connectProvider: SecretProvider<ConnectConfig> = {
 			if (statusCode === 401 || statusCode === 403) {
 				return { ok: false, error: 'Invalid 1Password Connect token' };
 			}
+			// Log the raw body server-side; show the client only a message parsed from
+			// Connect's own {message}/{messages} error shape (never arbitrary bytes).
+			if (text) console.warn(`[1Password Connect] testConnection ${statusCode}: ${text}`);
+			const safe = parseProviderError(text);
 			return {
 				ok: false,
-				error: `1Password Connect request failed (${statusCode}): ${text || 'no body'}`
+				error: `1Password Connect request failed (${statusCode})${safe ? `: ${safe}` : ''}`
 			};
 		} catch (e: unknown) {
 			const message = e instanceof Error ? e.message : String(e);

@@ -17,6 +17,7 @@ import { serviceAccountProvider } from './service-account';
 import { connectProvider } from './connect';
 import { infisicalProvider } from './infisical';
 import { vaultProvider } from './vault';
+import { dopplerProvider } from './doppler';
 
 // Registered providers. Adding a new backend means dropping a file in this
 // directory and registering it here; each implements the SecretProvider
@@ -25,7 +26,8 @@ const providers: Record<string, SecretProvider> = {
 	[serviceAccountProvider.type]: serviceAccountProvider as SecretProvider,
 	[connectProvider.type]: connectProvider as SecretProvider,
 	[infisicalProvider.type]: infisicalProvider as SecretProvider,
-	[vaultProvider.type]: vaultProvider as SecretProvider
+	[vaultProvider.type]: vaultProvider as SecretProvider,
+	[dopplerProvider.type]: dopplerProvider as SecretProvider
 };
 
 /** Returns the provider for a stored type, or undefined if unknown. */

@@ -18,7 +18,7 @@
  */
 
 import { request } from 'undici';
-import { UnsupportedOperationError } from './shared';
+import { UnsupportedOperationError, assertSafeProviderHost, sanitizeSelectorPath, parseProviderError } from './shared';
 import type { SecretProvider, TestConnectionResult, VaultConfig } from './shared';
 
 /** Undici response body handle, derived so we don't import undici's types. */
@@ -34,6 +34,7 @@ interface KvV2ReadResponse {
 
 /** `${address}/v1`, with any trailing slash on the address removed. */
 function apiBase(config: VaultConfig): string {
+	assertSafeProviderHost(config.address, 'HashiCorp Vault');
 	return `${config.address.replace(/\/$/, '')}/v1`;
 }
 
@@ -97,13 +98,18 @@ export const vaultProvider: SecretProvider<VaultConfig> = {
 				headers: authHeaders(config)
 			});
 			if (statusCode >= 200 && statusCode < 300) {
-				await body.dump();
+				await body.text().catch(() => '');
 				return { ok: true };
 			}
-			const detail = await readErrorDetail(body);
+			const rawBody = await body.text().catch(() => '');
+			// Log the full upstream body server-side; show the client only a message
+			// parsed from Vault's own {errors:[...]} shape (a non-Vault host probed via
+			// SSRF returns other text that won't parse, so nothing leaks).
+			if (rawBody) console.warn(`[HashiCorp Vault] token lookup ${statusCode}: ${rawBody}`);
+			const safe = parseProviderError(rawBody);
 			return {
 				ok: false,
-				error: `Vault returned ${statusCode}${detail ? `: ${detail}` : ''}`
+				error: `Vault returned ${statusCode}${safe ? `: ${safe}` : ''}`
 			};
 		} catch (e: unknown) {
 			const message = e instanceof Error ? e.message : String(e);
@@ -122,8 +128,8 @@ export const vaultProvider: SecretProvider<VaultConfig> = {
 	},
 
 	async resolveBulk(config: VaultConfig, selector: string): Promise<Record<string, string>> {
-		const mount = config.mount || 'secret';
-		const path = selector.replace(/^\/+/, '');
+		const mount = encodeURIComponent(config.mount || 'secret');
+		const path = sanitizeSelectorPath(selector, 'HashiCorp Vault');
 		const { statusCode, body } = await request(`${apiBase(config)}/${mount}/data/${path}`, {
 			method: 'GET',
 			headers: authHeaders(config)
@@ -136,9 +142,8 @@ export const vaultProvider: SecretProvider<VaultConfig> = {
 		}
 		if (statusCode < 200 || statusCode >= 300) {
 			const detail = await readErrorDetail(body);
-			throw new Error(
-				`HashiCorp Vault: read failed for ${mount}/${path} (status ${statusCode})${detail ? `: ${detail}` : ''}`
-			);
+			if (detail) console.warn(`[HashiCorp Vault] read ${mount}/${path} ${statusCode}: ${detail}`);
+			throw new Error(`HashiCorp Vault: read failed for ${mount}/${path} (status ${statusCode})`);
 		}
 
 		const payload = (await body.json()) as KvV2ReadResponse;

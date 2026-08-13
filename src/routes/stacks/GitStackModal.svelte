@@ -1188,7 +1188,9 @@
 
 			<!-- Right column: Environment Variables -->
 			<div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-800/50">
-				<!-- Secret provider selector -->
+				<!-- Secret provider selector - hidden when no external provider is configured
+				     (still shown if this stack already has one bound, so it can be cleared). -->
+				{#if secretProviders.length > 0 || formSecretProviderId !== null}
 				<div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 bg-zinc-100/60 dark:bg-zinc-800/60 flex items-center gap-2 text-xs">
 					<Label for="secret-provider-select-git" class="text-xs text-muted-foreground shrink-0">Secret provider</Label>
 					<Select.Root
@@ -1223,6 +1225,7 @@
 						</Tooltip.Content>
 					</Tooltip.Root>
 				</div>
+				{/if}
 				<StackEnvVarsPanel
 					bind:variables={envVars}
 					placeholder={{ key: 'MY_VAR', value: 'value' }}

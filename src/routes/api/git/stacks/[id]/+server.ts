@@ -59,6 +59,17 @@ export const PUT: RequestHandler = async (event) => {
 			return json({ error: 'secretProviderId must be a number or null' }, { status: 400 });
 		}
 
+		// Binding a secret provider resolves its secrets into the container at deploy;
+		// require the secrets permission so a stacks-only user can't exfiltrate a
+		// provider's secrets by binding it and reading the container env.
+		if (
+			typeof data.secretProviderId === 'number' &&
+			auth.authEnabled &&
+			!(await auth.can('secrets', 'view', existing.environmentId || undefined))
+		) {
+			return json({ error: 'Permission denied: binding a secret provider requires the secrets permission' }, { status: 403 });
+		}
+
 		// Validate stack name if it's being changed
 		if (data.stackName !== undefined) {
 			const trimmedStackName = data.stackName.trim();

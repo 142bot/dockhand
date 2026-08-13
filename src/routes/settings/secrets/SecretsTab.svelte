@@ -12,7 +12,10 @@
 		KeyRound,
 		PlugZap,
 		RefreshCw,
+		Check,
 	} from 'lucide-svelte';
+	import { scale } from 'svelte/transition';
+	import { backOut, cubicIn } from 'svelte/easing';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import { canAccess } from '$lib/stores/auth';
 	import { EmptyState } from '$lib/components/ui/empty-state';
@@ -20,6 +23,7 @@
 		type SecretProvider,
 		providerTypeLabel,
 	} from './ProviderModal.svelte';
+	import { getProviderIcon } from '$lib/components/provider-icons';
 
 	let providers = $state<SecretProvider[]>([]);
 	let loading = $state(true);
@@ -27,6 +31,9 @@
 	let editing = $state<SecretProvider | null>(null);
 	let confirmDeleteId = $state<number | null>(null);
 	let testingId = $state<number | null>(null);
+	// Brief green tick on the tile's Test button right after a successful test.
+	let testOkId = $state<number | null>(null);
+	let testOkTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function fetchProviders() {
 		loading = true;
@@ -73,6 +80,9 @@
 			const data = await response.json();
 			if (data.ok) {
 				toast.success(`${provider.name}: connection works`);
+				clearTimeout(testOkTimer);
+				testOkId = provider.id;
+				testOkTimer = setTimeout(() => (testOkId = null), 2000);
 			} else {
 				toast.error(
 					`${provider.name}: ${data.error || 'connection failed'}`,
@@ -121,14 +131,13 @@
 	{:else}
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 			{#each providers as provider (provider.id)}
+				{@const ProviderIcon = getProviderIcon(provider.type)}
 				<div out:fade={{ duration: 200 }}>
 					<Card.Root>
 						<Card.Header class="pb-2">
 							<div class="flex items-start justify-between">
 								<div class="flex items-center gap-2">
-									<KeyRound
-										class="w-5 h-5 text-muted-foreground"
-									/>
+									<ProviderIcon class="w-5 h-5 text-muted-foreground" />
 									<Card.Title class="text-base"
 										>{provider.name}</Card.Title
 									>
@@ -151,14 +160,19 @@
 										size="sm"
 										onclick={() => testProvider(provider)}
 										disabled={testingId === provider.id}
+										class={`transition-colors duration-300 ${testOkId === provider.id ? 'border-green-500/60 text-green-600 dark:text-green-400' : ''}`}
 									>
-										{#if testingId === provider.id}
-											<RefreshCw
-												class="w-3 h-3 animate-spin"
-											/>
-										{:else}
-											<PlugZap class="w-3 h-3" />
-										{/if}
+										<span class="inline-flex w-3 h-3 mr-1 items-center justify-center shrink-0">
+											{#if testingId === provider.id}
+												<RefreshCw class="w-3 h-3 animate-spin" />
+											{:else if testOkId === provider.id}
+												<span in:scale={{ duration: 260, start: 0.4, easing: backOut }} out:scale={{ duration: 150, start: 0.6, easing: cubicIn }}>
+													<Check class="w-3 h-3 text-green-600 dark:text-green-400" />
+												</span>
+											{:else}
+												<PlugZap class="w-3 h-3" />
+											{/if}
+										</span>
 										Test
 									</Button>
 								{/if}

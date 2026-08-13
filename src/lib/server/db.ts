@@ -6,6 +6,7 @@
  */
 
 import type { SecretProviderConfig, SecretProviderType } from './secretproviders/shared';
+import { SECRET_CONFIG_KEYS } from './secretproviders/shared';
 import {
 	db,
 	isPostgres,
@@ -86,6 +87,7 @@ import {
 import type { AllGridPreferences, GridId, GridColumnPreferences } from '$lib/types';
 import { encrypt, decrypt, decryptStrict, isEncrypted } from './encryption.js';
 import { parseEnvInterpolation } from './env-interpolation';
+import { parseInjectedSecretKeys, serializeInjectedSecretKeys } from './stack-secret-keys';
 import { invalidateVulnerabilitiesCache } from './vulnerabilities-cache';
 
 // Re-export for backwards compatibility
@@ -375,7 +377,25 @@ export async function updateSecretProvider(
 	if (data.name !== undefined) updateData.name = data.name;
 	if (data.type !== undefined) updateData.type = data.type;
 	if (data.config !== undefined) {
-		const encrypted = encrypt(JSON.stringify(data.config));
+		// The edit form pre-fills non-secret fields but leaves the token blank to mean
+		// "keep the stored secret". Merge the incoming config OVER the existing one so a
+		// blank/absent secret keeps its stored value instead of being wiped. Only applies
+		// when the provider type is unchanged (a type change is a full re-config).
+		let merged: Record<string, unknown> = { ...(data.config as Record<string, unknown>) };
+		const typeUnchanged = data.type === undefined;
+		if (typeUnchanged) {
+			const existing = await getSecretProviderById(id);
+			if (existing) {
+				for (const key of SECRET_CONFIG_KEYS) {
+					const incoming = (data.config as Record<string, unknown>)[key];
+					if (incoming === undefined || incoming === '') {
+						const stored = (existing.config as Record<string, unknown>)[key];
+						if (stored !== undefined) merged[key] = stored;
+					}
+				}
+			}
+		}
+		const encrypted = encrypt(JSON.stringify(merged));
 		if (encrypted) updateData.config = encrypted;
 	}
 	await db.update(secretProviders).set(updateData).where(eq(secretProviders.id, id));
@@ -3075,6 +3095,40 @@ export async function updateStackSource(
 	return true;
 }
 
+/**
+ * Persist the names (no values) of secret keys injected from the bound provider on
+ * the last deploy, so container inspect can mask them without a live provider call.
+ * Stored as a JSON array on stack_sources; null clears it. No-op if the stack has
+ * no source row.
+ */
+export async function setStackInjectedSecretKeys(
+	stackName: string,
+	environmentId: number | null | undefined,
+	keys: string[]
+): Promise<void> {
+	const existing = await getStackSource(stackName, environmentId ?? null);
+	if (!existing) return;
+	await db.update(stackSources)
+		.set({
+			injectedSecretKeys: serializeInjectedSecretKeys(keys),
+			updatedAt: new Date().toISOString()
+		})
+		.where(eq(stackSources.id, existing.id));
+}
+
+/**
+ * Read back the provider-injected secret key names for a stack (empty if none).
+ * Tolerates a malformed/legacy value by returning an empty set.
+ */
+export async function getStackInjectedSecretKeys(
+	stackName: string,
+	environmentId?: number | null
+): Promise<Set<string>> {
+	const source = await getStackSource(stackName, environmentId ?? null);
+	const raw = (source as { injectedSecretKeys?: string | null } | null)?.injectedSecretKeys;
+	return parseInjectedSecretKeys(raw);
+}
+
 export async function deleteStackSource(stackName: string, environmentId?: number | null): Promise<boolean> {
 	console.log(`[GitStack] Deleting stack_sources "${stackName}" env=${environmentId}`);
 	// Delete matching record (either with specific envId or NULL)
@@ -5240,6 +5294,12 @@ export async function getSecretKeysToMask(
 ): Promise<Set<string>> {
 	const vars = await getStackEnvVars(stackName, environmentId, true);
 	const secretKeyNames = new Set(vars.filter(v => v.isSecret).map(v => v.key));
+
+	// Provider-injected secrets (Vault/Doppler bulk keys, promoted op:// refs) live
+	// only in the provider, never in stack_env_vars, so add the names persisted on
+	// the last deploy. Without this they leak plaintext in container inspect.
+	const injected = await getStackInjectedSecretKeys(stackName, environmentId);
+	for (const key of injected) secretKeyNames.add(key);
 
 	if (secretKeyNames.size === 0) return secretKeyNames;
 

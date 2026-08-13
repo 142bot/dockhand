@@ -7,6 +7,7 @@ import {
 	deleteSecretProvider
 } from '$lib/server/db';
 import { hasProvider } from '$lib/server/secretproviders';
+import { redactProviderConfig } from '$lib/server/secretproviders/shared';
 import { authorize } from '$lib/server/authorize';
 import { auditSecretProvider } from '$lib/server/audit';
 
@@ -21,13 +22,15 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		return json({ error: 'Invalid secret provider ID' }, { status: 400 });
 	}
 
-	const providers = await getSecretProviders();
-	const provider = providers.find((p) => p.id === id);
-	if (!provider) {
+	// Load the full (decrypted) row so the edit form can pre-fill the NON-secret
+	// coordinates (host, projectId, mount, ...). redactProviderConfig strips the
+	// token before it leaves the server, so the secret never reaches the client.
+	const full = await getSecretProviderById(id);
+	if (!full) {
 		return json({ error: 'Secret provider not found' }, { status: 404 });
 	}
-	// Summary only, never the decrypted config.
-	return json(provider);
+	const { config, ...summary } = full;
+	return json({ ...summary, config: redactProviderConfig(config) });
 };
 
 export const PUT: RequestHandler = async (event) => {
