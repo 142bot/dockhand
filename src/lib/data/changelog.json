@@ -26,7 +26,7 @@
       },
       {
         "type": "feature",
-        "text": "stack secrets from external providers (1Password, HashiCorp Vault, Infisical and Doppler) (PR#1360, @wintech147)"
+        "text": "stack secrets from external providers (1Password, HashiCorp Vault, Infisical and Doppler) (PR#1360, @wintech147, @GooRoo)"
       },
       {
         "type": "fix",
@@ -39,6 +39,14 @@
       {
         "type": "fix",
         "text": "start, stop or restart on Hawser updates its files on the remote host, not only on redeploy (#1240)"
+      },
+      {
+        "type": "fix",
+        "text": "grouped container logs now show one merged timeline sorted by time (#1406)"
+      },
+      {
+        "type": "fix",
+        "text": "multi-arch images no longer show false \"update available\" (#1367)"
       }
     ],
     "imageTag": "fnsys/dockhand:v1.0.42"
