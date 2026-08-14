@@ -102,6 +102,22 @@ export function parseProviderError(rawBody: string | undefined | null): string |
 	return pick(obj.errors) ?? pick(obj.messages) ?? pick(obj.message) ?? null;
 }
 
+/**
+ * True when `body` parses as a JSON object or array. A 2xx status alone does not prove a
+ * host is the expected backend - a parked domain / captive portal / reverse proxy answers
+ * 200 with an HTML page. Every provider backend answers JSON, so testConnection requires
+ * this before reporting success. Rejects empty bodies and bare scalars (`5`, `true`).
+ */
+export function isJsonResponse(body: string | undefined | null): boolean {
+	if (!body || !body.trim()) return false;
+	try {
+		const v = JSON.parse(body);
+		return typeof v === 'object' && v !== null;
+	} catch {
+		return false;
+	}
+}
+
 /** 1Password service account: a single bearer token. */
 export interface ServiceAccountConfig {
 	token: string;
@@ -169,6 +185,28 @@ export type SecretProviderConfig =
  * `type: 'password'` fields in ProviderModal.svelte's PROVIDER_FIELDS.
  */
 export const SECRET_CONFIG_KEYS = new Set(['token']);
+
+/**
+ * Merges an incoming (edit-form) config OVER the stored one for a write/test: the incoming
+ * non-secret coordinates win, but any SECRET_CONFIG_KEY (the token) that is blank/absent in
+ * the incoming falls back to the STORED value - because the edit form leaves the token blank
+ * to mean "keep the stored secret". Used by BOTH the update (persist) and the edit-mode Test
+ * so a Test validates exactly what a Save would persist. Keep them on this one helper so they
+ * can never diverge.
+ */
+export function mergeProviderConfigForWrite(
+	incoming: Record<string, unknown>,
+	stored: Record<string, unknown>
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...incoming };
+	for (const key of SECRET_CONFIG_KEYS) {
+		const v = incoming[key];
+		if (v === undefined || v === '') {
+			if (stored[key] !== undefined) merged[key] = stored[key];
+		}
+	}
+	return merged;
+}
 
 /**
  * Returns a copy of a provider config with secret values removed, so the edit form

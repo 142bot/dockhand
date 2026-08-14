@@ -6,7 +6,7 @@
  */
 
 import type { SecretProviderConfig, SecretProviderType } from './secretproviders/shared';
-import { SECRET_CONFIG_KEYS } from './secretproviders/shared';
+import { mergeProviderConfigForWrite } from './secretproviders/shared';
 import {
 	db,
 	isPostgres,
@@ -386,13 +386,10 @@ export async function updateSecretProvider(
 		if (typeUnchanged) {
 			const existing = await getSecretProviderById(id);
 			if (existing) {
-				for (const key of SECRET_CONFIG_KEYS) {
-					const incoming = (data.config as Record<string, unknown>)[key];
-					if (incoming === undefined || incoming === '') {
-						const stored = (existing.config as Record<string, unknown>)[key];
-						if (stored !== undefined) merged[key] = stored;
-					}
-				}
+				merged = mergeProviderConfigForWrite(
+					data.config as Record<string, unknown>,
+					existing.config as Record<string, unknown>
+				);
 			}
 		}
 		const encrypted = encrypt(JSON.stringify(merged));

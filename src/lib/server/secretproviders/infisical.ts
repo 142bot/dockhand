@@ -18,7 +18,7 @@
 
 import { request } from 'undici';
 import type { InfisicalConfig, SecretProvider, TestConnectionResult } from './shared';
-import { assertSafeProviderHost, parseProviderError } from './shared';
+import { assertSafeProviderHost, parseProviderError, isJsonResponse } from './shared';
 import { UnsupportedOperationError } from './shared';
 
 /** Shape of a single secret in the /api/v3/secrets/raw response. */
@@ -97,6 +97,9 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 			// message parsed from Infisical's own {message}/{messages} shape.
 			const rawBody = await body.text().catch(() => '');
 			if (statusCode >= 200 && statusCode < 300) {
+				if (!isJsonResponse(rawBody)) {
+					return { ok: false, error: 'Infisical did not return a JSON response - the host may not be an Infisical server' };
+				}
 				return { ok: true };
 			}
 			if (rawBody) console.warn(`[Infisical] testConnection ${statusCode}: ${rawBody}`);

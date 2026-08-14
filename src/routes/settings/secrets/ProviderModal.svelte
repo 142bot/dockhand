@@ -212,23 +212,24 @@
 		formError = '';
 		try {
 			const config = collectConfig();
-			// On edit the token is server-side (blank field = keep stored), so if the
-			// user hasn't typed a new one, test the STORED config; the pre-filled
-			// non-secret fields aren't enough to re-test from the client.
-			const hasNewSecret = fields.some((f) => f.type === 'password' && (config[f.key] ?? '') !== '');
+			const missing = missingRequired(config, isEditing);
+			if (missing) {
+				formError = missing;
+				return;
+			}
 
 			let response: Response;
-			if (isEditing && !hasNewSecret) {
-				// Test the stored (server-side) config.
+			if (isEditing) {
+				// Test EXACTLY what a Save would persist: the typed non-secret fields, merged
+				// server-side over the stored config (a blank token keeps the stored one). This
+				// makes an edited address/mount/namespace actually get tested - not the old
+				// stored config.
 				response = await fetch(`/api/secret-providers/${provider!.id}/test`, {
 					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ config }),
 				});
 			} else {
-				const missing = missingRequired(config, isEditing);
-				if (missing) {
-					formError = missing;
-					return;
-				}
 				response = await fetch('/api/secret-providers/test', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
