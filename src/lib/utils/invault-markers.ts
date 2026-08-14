@@ -26,6 +26,19 @@ export function classifyMarker(
 }
 
 /**
+ * The panel's "missing" set: compose-required vars with no local value, MINUS the
+ * ones the bound provider currently supplies (the LIVE probe set). This is the SAME
+ * source the editor's IN VAULT markers use, so panel and editor always agree. The
+ * last-deploy injected names are deliberately NOT consulted here - a var is dropped
+ * from "missing" only because the provider has it RIGHT NOW, never because it was
+ * injected at a past deploy (a failed probe leaves the set empty -> stays missing,
+ * never a false green).
+ */
+export function effectiveMissing(missing: string[], providerKeys: Set<string>): string[] {
+	return missing.filter((k) => !providerKeys.has(k));
+}
+
+/**
  * Given the inline op:// (or other provider) references the client submitted as
  * `{ varName, ref }` pairs and the SUBSET of ref STRINGS the provider resolved,
  * returns the VAR NAMES whose ref resolved. `resolveSecretReferences` keys its

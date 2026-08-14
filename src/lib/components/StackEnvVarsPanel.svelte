@@ -8,6 +8,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { getProviderIcon } from '$lib/components/provider-icons';
 	import { providerTypeLabel } from '../../routes/settings/secrets/ProviderModal.svelte';
+	import { effectiveMissing } from '$lib/utils/invault-markers';
 
 	interface Props {
 		variables: EnvVar[]; // Bindable - ALL variables (secrets + non-secrets)
@@ -27,6 +28,9 @@
 		providerName?: string | null;
 		/** Set when the live provider probe failed - shown as an amber line. */
 		probeError?: string | null;
+		/** Key NAMES the live probe found in the bound provider (present RIGHT NOW).
+		 *  These are not "missing" even without a local value. Empty on probe failure. */
+		providerKeySet?: Set<string>;
 		showInterpolationHint?: boolean;
 		theme?: 'light' | 'dark';
 		class?: string;
@@ -49,6 +53,7 @@
 		providerType = null,
 		providerName = null,
 		probeError = null,
+		providerKeySet = new Set<string>(),
 		showInterpolationHint = false,
 		theme = 'dark',
 		class: className = '',
@@ -57,13 +62,17 @@
 	}: Props = $props();
 
 
-	// Provider-injected keys are supplied at deploy from the bound secret provider, so
-	// they are NOT "missing" even when a ${VAR} in compose has no local value. Drop them
-	// from the missing set (and expose them separately so the editor can mark them).
-	const injectedSet = $derived(new Set(injectedSecretKeys));
+	// A ${VAR} the bound provider currently supplies (LIVE probe) is NOT "missing" even
+	// without a local value. Drop those from the panel's missing count / "Add missing"
+	// list so the panel matches the editor's IN VAULT markers - same source, one truth.
+	// This is purely live: the last-deploy injected names drive only the banner, never
+	// this set. A failed probe leaves providerKeySet empty, so those keys stay missing.
 	const effectiveValidation = $derived.by<ValidationResult | null>(() => {
-		if (!validation || injectedSet.size === 0) return validation;
-		return { ...validation, missing: validation.missing.filter((k) => !injectedSet.has(k)) };
+		if (!validation || providerKeySet.size === 0) return validation;
+		return {
+			...validation,
+			missing: effectiveMissing(validation.missing, providerKeySet)
+		};
 	});
 
 	const STORAGE_KEY_VIEW_MODE = 'dockhand-env-vars-view-mode';

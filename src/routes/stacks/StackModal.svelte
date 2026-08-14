@@ -1862,6 +1862,7 @@
 									providerType={selectedProviderType}
 									providerName={selectedProviderName}
 									{probeError}
+									{providerKeySet}
 									{readonly}
 									onchange={() => { markDirty(); debouncedValidate(); }}
 									theme={editorTheme}
