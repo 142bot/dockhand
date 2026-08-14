@@ -1374,7 +1374,7 @@ async function executeLocalCompose(
 				return {
 					success: false,
 					output: stdout,
-					error: `docker compose ${operation} timed out after ${COMPOSE_TIMEOUT_MS / 1000} seconds`,
+					error: `docker compose ${operation} timed out after ${COMPOSE_TIMEOUT_MS / 1000} seconds. If a service has a long stop_grace_period, raise the COMPOSE_TIMEOUT env var (seconds) above it.`,
 					command: commandStr
 				};
 			}
