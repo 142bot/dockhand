@@ -66,6 +66,13 @@ export const PUT: RequestHandler = async (event) => {
 			return json({ error: 'Config must be an object' }, { status: 400 });
 		}
 
+		if (name !== undefined && name !== existing.name) {
+			const all = await getSecretProviders();
+			if (all.some((p) => p.id !== id && p.name.trim() === name)) {
+				return json({ error: 'A secret provider with this name already exists' }, { status: 400 });
+			}
+		}
+
 		const updated = await updateSecretProvider(id, { name, type, config });
 		if (!updated) {
 			return json({ error: 'Secret provider not found' }, { status: 404 });
@@ -81,9 +88,6 @@ export const PUT: RequestHandler = async (event) => {
 		return json(updated);
 	} catch (error: any) {
 		console.error('Error updating secret provider:', error);
-		if (error.message?.includes('UNIQUE') || error.message?.includes('unique')) {
-			return json({ error: 'A secret provider with this name already exists' }, { status: 400 });
-		}
 		return json({ error: 'Failed to update secret provider' }, { status: 500 });
 	}
 };

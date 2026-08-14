@@ -44,15 +44,17 @@ export const POST: RequestHandler = async (event) => {
 			return json({ error: 'Config is required' }, { status: 400 });
 		}
 
+		const existing = await getSecretProviders();
+		if (existing.some((p) => p.name.trim() === name)) {
+			return json({ error: 'A secret provider with this name already exists' }, { status: 400 });
+		}
+
 		const provider = await createSecretProvider({ type, name, config });
 		await auditSecretProvider(event, 'create', provider.id, provider.name, { type });
 		// Never return the decrypted config.
 		return json(provider, { status: 201 });
 	} catch (error: any) {
 		console.error('Error creating secret provider:', error);
-		if (error.message?.includes('UNIQUE') || error.message?.includes('unique')) {
-			return json({ error: 'A secret provider with this name already exists' }, { status: 400 });
-		}
 		return json({ error: 'Failed to create secret provider' }, { status: 500 });
 	}
 };
