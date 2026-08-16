@@ -73,6 +73,7 @@
 		"@codemirror/view": "6.39.11",
 		"@lezer/highlight": "1.2.3",
 		"@lucide/lab": "0.1.2",
+		"@replit/codemirror-indentation-markers": "6.5.3",
 		"ansi_up": "6.0.6",
 		"argon2": "0.41.1",
 		"better-sqlite3": "11.7.0",

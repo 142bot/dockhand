@@ -16,6 +16,7 @@
 	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import NavigationSelector from '$lib/components/NavigationSelector.svelte';
 	import AnimateIconsToggle from '$lib/components/AnimateIconsToggle.svelte';
+	import IndentGuidesToggle from '$lib/components/IndentGuidesToggle.svelte';
 	import ColoredActionsToggle from '$lib/components/ColoredActionsToggle.svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 
@@ -511,6 +512,7 @@ services:
 							<ThemeSelector />
 							<ColoredActionsToggle />
 							<AnimateIconsToggle />
+							<IndentGuidesToggle />
 							{#if $authStore.authEnabled}
 								<div class="text-xs text-muted-foreground flex items-start gap-1.5 mt-2 p-2 bg-muted/50 rounded-md">
 									<HelpCircle class="w-3.5 h-3.5 shrink-0 mt-0.5" />

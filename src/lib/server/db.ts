@@ -536,8 +536,9 @@ export async function getUserThemePreferences(userId: number): Promise<{
 	animateIcons: boolean;
 	coloredActionButtons: boolean;
 	actionIconSize: string;
+	editorIndentGuides: boolean;
 }> {
-	const [lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, animateIcons, coloredActionButtons, actionIconSize] = await Promise.all([
+	const [lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, animateIcons, coloredActionButtons, actionIconSize, editorIndentGuides] = await Promise.all([
 		getUserSetting(userId, 'light_theme'),
 		getUserSetting(userId, 'dark_theme'),
 		getUserSetting(userId, 'font'),
@@ -547,7 +548,8 @@ export async function getUserThemePreferences(userId: number): Promise<{
 		getUserSetting(userId, 'editor_font'),
 		getUserSetting(userId, 'animate_icons'),
 		getUserSetting(userId, 'colored_action_buttons'),
-		getUserSetting(userId, 'action_icon_size')
+		getUserSetting(userId, 'action_icon_size'),
+		getUserSetting(userId, 'editor_indent_guides')
 	]);
 	return {
 		lightTheme: lightTheme || 'default',
@@ -561,13 +563,15 @@ export async function getUserThemePreferences(userId: number): Promise<{
 		animateIcons: animateIcons === 'false' ? false : true,
 		// Default OFF — only true when explicitly stored
 		coloredActionButtons: coloredActionButtons === 'true',
-		actionIconSize: actionIconSize || 'normal'
+		actionIconSize: actionIconSize || 'normal',
+		// Default OFF — only true when explicitly stored (#1410)
+		editorIndentGuides: editorIndentGuides === 'true'
 	};
 }
 
 export async function setUserThemePreferences(
 	userId: number,
-	prefs: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean; coloredActionButtons?: boolean; actionIconSize?: string }
+	prefs: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean; coloredActionButtons?: boolean; actionIconSize?: string; editorIndentGuides?: boolean }
 ): Promise<void> {
 	const updates: Promise<void>[] = [];
 	if (prefs.lightTheme !== undefined) {
@@ -599,6 +603,9 @@ export async function setUserThemePreferences(
 	}
 	if (prefs.actionIconSize !== undefined) {
 		updates.push(setUserSetting(userId, 'action_icon_size', prefs.actionIconSize));
+	}
+	if (prefs.editorIndentGuides !== undefined) {
+		updates.push(setUserSetting(userId, 'editor_indent_guides', prefs.editorIndentGuides ? 'true' : 'false'));
 	}
 	await Promise.all(updates);
 }

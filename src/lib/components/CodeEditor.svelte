@@ -9,6 +9,9 @@
 	import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 	import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
+	import { indentationMarkers } from '@replit/codemirror-indentation-markers';
+	import { themeStore } from '$lib/stores/theme';
+	import { get } from 'svelte/store';
 	import { shell } from '@codemirror/legacy-modes/mode/shell';
 	import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
 	import { toml } from '@codemirror/legacy-modes/mode/toml';
@@ -707,6 +710,19 @@
 			EditorView.lineWrapping,
 			EditorState.tabSize.of(2),
 			getLanguageExtension(language),
+			// Vertical indentation guides, opt-in per user (#1410). Subtle tones for both themes.
+			...(get(themeStore).editorIndentGuides
+				? [indentationMarkers({
+						highlightActiveBlock: true,
+						hideFirstIndent: true,
+						colors: {
+							light: '#e2e8f0',
+							dark: '#3a3f4b',
+							activeLight: '#94a3b8',
+							activeDark: '#5b6472'
+						}
+					})]
+				: []),
 			...(language === 'yaml' ? [Prec.high(keymap.of([{ key: 'Enter', run: yamlNewlineAndIndent }]))] : [])
 		].flat();
 
@@ -836,16 +852,18 @@
 	// Track previous values for comparison
 	let prevLanguage = $state(language);
 	let prevTheme = $state(theme);
+	let prevIndentGuides = $state($themeStore.editorIndentGuides);
 
-	// Recreate editor if language or theme changes
+	// Recreate editor if language, theme, or the indent-guides preference changes
 	$effect(() => {
 		const currentLanguage = language;
 		const currentTheme = theme;
+		const currentIndentGuides = $themeStore.editorIndentGuides;
 
-		// Only recreate if language or theme actually changed
-		if (view && (currentLanguage !== prevLanguage || currentTheme !== prevTheme)) {
+		if (view && (currentLanguage !== prevLanguage || currentTheme !== prevTheme || currentIndentGuides !== prevIndentGuides)) {
 			prevLanguage = currentLanguage;
 			prevTheme = currentTheme;
+			prevIndentGuides = currentIndentGuides;
 			const currentContent = view.state.doc.toString();
 			destroyEditor();
 			value = currentContent; // Preserve content

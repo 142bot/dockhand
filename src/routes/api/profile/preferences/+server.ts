@@ -47,7 +47,7 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 
 		const validActionIconSizes = ['small', 'normal', 'large', 'xlarge'];
 
-		const updates: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean; coloredActionButtons?: boolean; actionIconSize?: string } = {};
+		const updates: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean; coloredActionButtons?: boolean; actionIconSize?: string; editorIndentGuides?: boolean } = {};
 
 		if (data.lightTheme !== undefined) {
 			if (!validLightThemeIds.includes(data.lightTheme)) {
@@ -103,6 +103,13 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Invalid animateIcons' }, { status: 400 });
 			}
 			updates.animateIcons = data.animateIcons;
+		}
+
+		if (data.editorIndentGuides !== undefined) {
+			if (typeof data.editorIndentGuides !== 'boolean') {
+				return json({ error: 'Invalid editorIndentGuides' }, { status: 400 });
+			}
+			updates.editorIndentGuides = data.editorIndentGuides;
 		}
 
 		if (data.coloredActionButtons !== undefined) {
