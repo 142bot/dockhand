@@ -18,7 +18,7 @@ import { computeRequestTimeoutMs } from './backups/request-timeout';
 import type { Environment } from './db';
 import { getSetting } from './db';
 import { getAdditionalVolumeBinds, dedupeVolumesForRecreate } from './mount-dedupe';
-import { resolveNanoCpusConflict } from './hostconfig-recreate';
+import { resolveNanoCpusConflict, resolvePodmanUsernsMode } from './hostconfig-recreate';
 import { rebaseEnvOntoImage, rebaseLabelsOntoImage, rebaseCommand, describeEnvRebase, describeLabelRebase, type ImageEnvLabels } from './container-env-merge';
 import { encodeRegistryAuth } from './registry-auth';
 import { isSystemContainer, classifyEmptyDigestImage, localDigestIsIndexChild } from './scheduler/tasks/update-utils';
@@ -2093,6 +2093,20 @@ export async function recreateContainerFromInspect(
 		log?.('Dropped CpuPeriod/CpuQuota — they conflict with NanoCpus at create time (kept NanoCpus)');
 	}
 
+	// Podman lowers `--userns keep-id` to UsernsMode:"private" in inspect, which create then
+	// rejects without inline mappings (#1409). Restore the original intent from the annotation
+	// so keep-id survives the recreate; Docker (UsernsMode != "private") is untouched.
+	const usernsFix = resolvePodmanUsernsMode(createConfig.HostConfig?.UsernsMode, config.Annotations);
+	if (usernsFix && createConfig.HostConfig) {
+		if ('mode' in usernsFix) {
+			createConfig.HostConfig.UsernsMode = usernsFix.mode;
+			log?.(`Restored UsernsMode "${usernsFix.mode}" from Podman annotation (was "private")`);
+		} else {
+			delete createConfig.HostConfig.UsernsMode;
+			log?.('Dropped UsernsMode "private" — Podman rejects it without inline UID/GID mappings');
+		}
+	}
+
 	// container:<name> mode shares the network namespace — Docker rejects
 	// networking-related fields on the dependent container since they're
 	// owned by the network provider container
@@ -2303,6 +2317,14 @@ export async function createContainerFromMetadata(
 	const swappiness = createConfig.HostConfig?.MemorySwappiness;
 	if (swappiness == null || swappiness === -1 || swappiness === 0) {
 		delete createConfig.HostConfig.MemorySwappiness;
+	}
+
+	// Podman keep-id -> UsernsMode:"private" in inspect, rejected on create (#1409).
+	// Restore the intent from the annotation; Docker (UsernsMode != "private") untouched.
+	const usernsFix = resolvePodmanUsernsMode(createConfig.HostConfig?.UsernsMode, config.Annotations);
+	if (usernsFix && createConfig.HostConfig) {
+		if ('mode' in usernsFix) createConfig.HostConfig.UsernsMode = usernsFix.mode;
+		else delete createConfig.HostConfig.UsernsMode;
 	}
 
 	// container:<name> mode: clean up conflicting network fields
