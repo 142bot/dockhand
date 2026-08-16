@@ -1,9 +1,12 @@
 [
   {
     "version": "1.0.42",
-    "date": "",
-    "comingSoon": true,
+    "date": "2026-08-16",
     "changes": [
+      {
+        "type": "feature",
+        "text": "optional indentation guides in the compose/YAML editor (#1410)"
+      },
       {
         "type": "feature",
         "text": "support caddy-docker-proxy labels (#1390)"
@@ -31,6 +34,10 @@
       {
         "type": "fix",
         "text": "container update no longer fails on Podman when CPU limits are set (#1381)"
+      },
+      {
+        "type": "fix",
+        "text": "container update no longer fails on Podman for containers using userns_mode: keep-id (#1409)"
       },
       {
         "type": "fix",
