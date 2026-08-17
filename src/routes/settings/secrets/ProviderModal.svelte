@@ -25,6 +25,7 @@
 		{ value: 'vault', label: 'HashiCorp Vault' },
 		{ value: 'doppler', label: 'Doppler' },
 		{ value: 'bitwarden', label: 'Bitwarden Secrets Manager' },
+		{ value: 'proton', label: 'Proton Pass' },
 	];
 
 	// Config fields per provider type, matching the config shapes in
@@ -39,7 +40,9 @@
 		],
 		infisical: [
 			{ key: 'host', label: 'API host', type: 'text', required: true, placeholder: 'https://app.infisical.com', hint: 'Infisical Cloud or your self-hosted URL.' },
-			{ key: 'token', label: 'Access token', type: 'password', required: true, placeholder: 'st...', hint: 'A service token or machine-identity access token.' },
+			{ key: 'token', label: 'Access token', type: 'password', required: false, placeholder: 'st...', hint: 'A static service/access token. Leave blank to use Universal Auth (client ID + secret) below instead.' },
+			{ key: 'clientId', label: 'Universal Auth client ID', type: 'text', required: false, placeholder: 'machine identity client id', hint: 'A Machine Identity client ID. Pair with the client secret; leave blank if using a static token.' },
+			{ key: 'clientSecret', label: 'Universal Auth client secret', type: 'password', required: false, placeholder: 'machine identity client secret', hint: 'The Machine Identity client secret. Exchanged for a short-lived token via Universal Auth.' },
 			{ key: 'projectId', label: 'Project ID', type: 'text', required: true, placeholder: 'workspace / project id', hint: 'The workspace/project the secrets live in.' },
 			{ key: 'environment', label: 'Environment', type: 'text', required: true, placeholder: 'prod', hint: 'Environment slug, e.g. prod / staging.' },
 			{ key: 'path', label: 'Secret path', type: 'text', required: false, placeholder: '/', hint: 'Folder path within the project. Defaults to /.' },
@@ -58,6 +61,9 @@
 		bitwarden: [
 			{ key: 'token', label: 'Machine Account access token', type: 'password', required: true, placeholder: 'Machine Account access token', hint: 'A Bitwarden Secrets Manager Machine Account token with read access to the Project.' },
 			{ key: 'serverUrl', label: 'Server URL', type: 'text', required: false, placeholder: 'https://vault.bitwarden.com', hint: 'Optional for EU or self-hosted Bitwarden. Leave blank for Bitwarden US cloud.' },
+		],
+		proton: [
+			{ key: 'token', label: 'Personal access token', type: 'password', required: true, placeholder: 'pst_...::...', hint: 'A Proton Pass personal access token (pst_...) used by the operator-installed pass-cli.' },
 		],
 	};
 
@@ -90,6 +96,11 @@
 			label: 'Project',
 			placeholder: 'Bitwarden Project UUID',
 			hint: 'Bulk-load every secret from this Bitwarden Secrets Manager Project.'
+		},
+		'proton': {
+			label: 'Vault',
+			placeholder: 'Proton Pass vault name',
+			hint: 'Bulk-load every item from this Proton Pass vault. Leave blank to inject only inline pass:// references.'
 		}
 	};
 </script>
@@ -413,6 +424,14 @@
 					Bitwarden Secrets Manager requires an externally installed or mounted official
 					<code>bws</code> client at <code>/usr/local/bin/bws</code> (or an absolute
 					<code>DOCKHAND_BWS_PATH</code> process override).
+				</p>
+			{/if}
+			{#if formType === 'proton'}
+				<p class="text-xs text-muted-foreground">
+					Proton Pass requires an externally installed or mounted official
+					<code>pass-cli</code> client at <code>/usr/local/bin/pass-cli</code> (or an absolute
+					<code>DOCKHAND_PASS_CLI_PATH</code> process override). Supports both a bulk vault pull
+					and inline <code>pass://</code> references.
 				</p>
 			{/if}
 			<p class="text-xs text-muted-foreground">

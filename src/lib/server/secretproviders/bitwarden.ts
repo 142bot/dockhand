@@ -202,11 +202,10 @@ async function runBws(args: string[], limits: CommandLimits): Promise<Buffer> {
 		}
 		return await executeBws(stateDir, args, limits);
 	} finally {
-		try {
-			await rm(stateDir, { recursive: true, force: true });
-		} catch {
-			throw new BwsAdapterError('Bitwarden bws temporary state could not be removed');
-		}
+		// Swallow a cleanup failure: throwing here would mask the real error on the
+		// failure path, and turn a successful pull into a thrown error on the happy
+		// path. rm --force rarely fails; a stray temp dir is harmless residue.
+		await rm(stateDir, { recursive: true, force: true }).catch(() => undefined);
 	}
 }
 
