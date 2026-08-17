@@ -185,6 +185,7 @@
 				{ id: 'auto_update_failed', label: 'Update failed', description: 'Container auto-update failed' },
 				{ id: 'auto_update_blocked', label: 'Update blocked by vulns', description: 'Update blocked due to vulnerability criteria' },
 				{ id: 'updates_detected', label: 'Updates detected', description: 'Container image updates are available (scheduled check)' },
+				{ id: 'newer_version_available', label: 'Newer version tag', description: 'A newer version tag is published for a pinned image (semver, advisory)' },
 				{ id: 'batch_update_success', label: 'Batch update completed', description: 'Scheduled container updates completed successfully' }
 			]
 		},
@@ -532,6 +533,11 @@
 	let updateCheckAutoUpdate = $state(false);
 	let updateCheckVulnerabilityCriteria = $state<VulnerabilityCriteria>('never');
 	let updateCheckLoading = $state(false);
+	// Semver (newer-version-tag) detection — persisted in the same update-check JSON blob.
+	let semverEnabled = $state(false);
+	let semverMaxBump = $state<'patch' | 'minor' | 'major'>('major');
+	let semverMatchFlavor = $state(true);
+	let semverIncludePrerelease = $state(false);
 
 	// Image prune settings state
 	let imagePruneEnabled = $state(false);
@@ -1222,12 +1228,20 @@
 					updateCheckCron = data.settings.cron || '0 4 * * *';
 					updateCheckAutoUpdate = data.settings.autoUpdate ?? false;
 					updateCheckVulnerabilityCriteria = data.settings.vulnerabilityCriteria || 'never';
+					semverEnabled = data.settings.checkPinnedVersions ?? false;
+					semverMaxBump = data.settings.semverMaxBump || 'major';
+					semverMatchFlavor = data.settings.semverMatchFlavor ?? true;
+					semverIncludePrerelease = data.settings.semverIncludePrerelease ?? false;
 				} else {
 					// No settings found - use defaults
 					updateCheckEnabled = false;
 					updateCheckCron = '0 4 * * *';
 					updateCheckAutoUpdate = false;
 					updateCheckVulnerabilityCriteria = 'never';
+					semverEnabled = false;
+					semverMaxBump = 'major';
+					semverMatchFlavor = true;
+					semverIncludePrerelease = false;
 				}
 			}
 		} catch (error) {
@@ -1246,7 +1260,11 @@
 					enabled: updateCheckEnabled,
 					cron: updateCheckCron,
 					autoUpdate: updateCheckAutoUpdate,
-					vulnerabilityCriteria: updateCheckVulnerabilityCriteria
+					vulnerabilityCriteria: updateCheckVulnerabilityCriteria,
+					checkPinnedVersions: semverEnabled,
+					semverMaxBump,
+					semverMatchFlavor,
+					semverIncludePrerelease
 				})
 			});
 		} catch (error) {
@@ -2579,6 +2597,10 @@
 						bind:updateCheckAutoUpdate={updateCheckAutoUpdate}
 						bind:updateCheckVulnerabilityCriteria={updateCheckVulnerabilityCriteria}
 						scannerEnabled={scannerEnabled}
+						bind:semverEnabled={semverEnabled}
+						bind:semverMaxBump={semverMaxBump}
+						bind:semverMatchFlavor={semverMatchFlavor}
+						bind:semverIncludePrerelease={semverIncludePrerelease}
 						imagePruneLoading={imagePruneLoading}
 						bind:imagePruneEnabled={imagePruneEnabled}
 						bind:imagePruneCron={imagePruneCron}

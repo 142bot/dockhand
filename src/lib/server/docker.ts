@@ -19,6 +19,9 @@ import type { Environment } from './db';
 import { getSetting } from './db';
 import { getAdditionalVolumeBinds, dedupeVolumesForRecreate } from './mount-dedupe';
 import { resolveNanoCpusConflict, resolvePodmanUsernsMode } from './hostconfig-recreate';
+// Import-light image parsing shared with the semver layer; re-exported below for callers.
+import { parseImageReference } from './registry/image-ref';
+export { parseImageReference } from './registry/image-ref';
 import { rebaseEnvOntoImage, rebaseLabelsOntoImage, rebaseCommand, describeEnvRebase, describeLabelRebase, type ImageEnvLabels } from './container-env-merge';
 import { encodeRegistryAuth } from './registry-auth';
 import { isSystemContainer, classifyEmptyDigestImage, localDigestIsIndexChild } from './scheduler/tasks/update-utils';
@@ -3023,60 +3026,6 @@ export async function inspectImage(id: string, envId?: number | null) {
 	return dockerJsonRequest(`/images/${encodeURIComponent(id)}/json`, {}, envId);
 }
 
-/**
- * Parse an image reference into registry, repository, and tag components.
- * Follows Docker's reference parsing rules.
- * Examples:
- *   nginx:latest -> { registry: 'index.docker.io', repo: 'library/nginx', tag: 'latest' }
- *   ghcr.io/user/image:v1 -> { registry: 'ghcr.io', repo: 'user/image', tag: 'v1' }
- *   registry.example.com:5000/repo:tag -> { registry: 'registry.example.com:5000', repo: 'repo', tag: 'tag' }
- */
-function parseImageReference(imageName: string): { registry: string; repo: string; tag: string } {
-	let registry = 'index.docker.io';  // Docker Hub's actual host
-	let repo = imageName;
-	let tag = 'latest';
-
-	// Handle digest references (remove digest part for manifest lookup)
-	if (repo.includes('@')) {
-		const [repoWithoutDigest] = repo.split('@');
-		repo = repoWithoutDigest;
-	}
-
-	// Extract tag
-	const lastColon = repo.lastIndexOf(':');
-	if (lastColon > -1) {
-		const potentialTag = repo.substring(lastColon + 1);
-		// Make sure it's not a port number (no slashes in tags)
-		if (!potentialTag.includes('/')) {
-			tag = potentialTag;
-			repo = repo.substring(0, lastColon);
-		}
-	}
-
-	// Extract registry if present
-	const firstSlash = repo.indexOf('/');
-	if (firstSlash > -1) {
-		const firstPart = repo.substring(0, firstSlash);
-		// If the first part contains a dot, colon, or is "localhost", it's a registry
-		if (firstPart.includes('.') || firstPart.includes(':') || firstPart === 'localhost') {
-			registry = firstPart;
-			repo = repo.substring(firstSlash + 1);
-		}
-	}
-
-	// Normalize docker.io to index.docker.io (Docker Hub's actual registry host)
-	// docker.io redirects to www.docker.com, while index.docker.io is the real API
-	if (registry === 'docker.io') {
-		registry = 'index.docker.io';
-	}
-
-	// Docker Hub requires library/ prefix for official images
-	if (registry === 'index.docker.io' && !repo.includes('/')) {
-		repo = `library/${repo}`;
-	}
-
-	return { registry, repo, tag };
-}
 
 /**
  * Parse a registry URL into host and path components.
@@ -3113,7 +3062,7 @@ export function parseRegistryUrl(url: string): { host: string; path: string; ful
  * - Host-only stored: stored 'registry.example.com' matches requested 'registry.example.com/org'
  *   (allows a single credential entry to work for all org paths)
  */
-async function findRegistryCredentials(registryHost: string): Promise<{ username: string; password: string } | null> {
+export async function findRegistryCredentials(registryHost: string): Promise<{ username: string; password: string } | null> {
 	try {
 		// Import here to avoid circular dependency
 		const { getRegistries } = await import('./db.js');

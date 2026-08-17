@@ -65,7 +65,8 @@
 		Cable,
 		Copy,
 		Loader2,
-		AlertCircle
+		AlertCircle,
+		Tag
 	} from 'lucide-svelte';
 	import { broom } from '@lucide/lab';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -78,6 +79,8 @@
 	import BatchUpdateModal from './BatchUpdateModal.svelte';
 	import CheckUpdatesButton from '$lib/components/CheckUpdatesButton.svelte';
 	import BatchOperationModal from '$lib/components/BatchOperationModal.svelte';
+	import VersionUpdateBadge from '$lib/components/VersionUpdateBadge.svelte';
+	import VersionUpdateModal from '$lib/components/VersionUpdateModal.svelte';
 	import type { ContainerInfo } from '$lib/types';
 	import { EmptyState, NoEnvironment } from '$lib/components/ui/empty-state';
 	import { currentEnvironment, environments, appendEnvParam, clearStaleEnvironment } from '$lib/stores/environment';
@@ -274,6 +277,14 @@
 	const batchUpdateContainerIds = $derived($containerStore.pendingUpdateIds);
 	const batchUpdateContainerNames = $derived($containerStore.pendingUpdateNames);
 
+	// Version-update (semver) release-notes modal — opened from the Tag badge.
+	let versionModalContainer = $state<ContainerInfo | null>(null);
+	let versionModalNewer = $state<import('$lib/server/semver/find-newer').NewerVersion | null>(null);
+	function openVersionModal(container: ContainerInfo, newer: import('$lib/server/semver/find-newer').NewerVersion) {
+		versionModalContainer = container;
+		versionModalNewer = newer;
+	}
+
 	// Single container update mode (doesn't overwrite batch list)
 	let singleUpdateContainerId = $state<string | null>(null);
 	let singleUpdateContainerName = $state<string | null>(null);
@@ -307,9 +318,15 @@
 	// Set of container IDs with updates available (for O(1) lookup)
 	const containersWithUpdatesSet = $derived(new Set(batchUpdateContainerIds));
 
+	// Whether any semver badges are showing (may be true with zero digest updates).
+	const hasNewerVersions = $derived($containerStore.newerVersions.size > 0);
+
 	// Container IDs whose last update check failed (e.g. registry rate-limited) — #1255
 	const containersWithFailedCheckSet = $derived(new Set($containerStore.failedUpdateIds));
 	const failedUpdateErrors = $derived($containerStore.failedUpdateErrors);
+
+	// Newer-version-tag (semver) suggestions from the last check, keyed by container ID.
+	const newerVersionsMap = $derived($containerStore.newerVersions);
 
 	// Filter dropdown entries: real statuses plus the synthetic
 	// "update-available" entry, only offered once we know about a pending
@@ -466,6 +483,7 @@
 	function handleUpdateCheckComplete(result: {
 		withUpdates: Array<{ containerId: string; containerName: string }>;
 		failed?: Array<{ containerId: string; error: string }>;
+		newerVersions?: Array<{ containerId: string; newerVersion: import('$lib/server/semver/find-newer').NewerVersion }>;
 	}) {
 		if (result.withUpdates.length === 0) {
 			containerStore.setPendingUpdates([], new Map());
@@ -483,6 +501,9 @@
 			failed.map((f) => f.containerId),
 			new Map(failed.map((f) => [f.containerId, f.error]))
 		);
+		// Newer-version-tag (semver) suggestions — advisory badge, session-only.
+		const newer = result.newerVersions ?? [];
+		containerStore.setNewerVersions(new Map(newer.map((n) => [n.containerId, n.newerVersion])));
 	}
 
 	// Load pending updates from database (persisted from check-updates or scheduled jobs)
@@ -521,6 +542,8 @@
 				// Failed-check state is session-only — clear it here too so "Clear"
 				// dismisses the red "check failed" icons alongside the amber ones.
 				containerStore.setFailedUpdates([], new Map());
+				// Newer-version (semver) badges are session-only too — dismiss them alongside.
+				containerStore.setNewerVersions(new Map());
 			}
 		} catch {
 			toast.error('Failed to clear update indicators');
@@ -1432,6 +1455,24 @@
 					{/snippet}
 				</ConfirmPopover>
 				{/if}
+				{#if hasNewerVersions}
+					<!-- Newer version tags. Shown whether or not digest updates also exist.
+					     Only carries its own dismiss (×) when there's no "Update all" button
+					     (whose × already clears both) - so we never show two dismiss controls. -->
+					<Button
+						size="sm"
+						variant="outline"
+						class="border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:border-amber-500"
+						onclick={updatableContainersCount === 0 ? dismissPendingUpdates : undefined}
+						title={updatableContainersCount === 0 ? 'Dismiss version indicators' : 'Containers running a pinned tag with a newer version published'}
+					>
+						<Tag class="w-3.5 h-3.5" />
+						{$containerStore.newerVersions.size} newer version{$containerStore.newerVersions.size !== 1 ? 's' : ''}
+						{#if updatableContainersCount === 0}
+							<span class="ml-1 text-[12px] leading-none opacity-40">×</span>
+						{/if}
+					</Button>
+				{/if}
 				{#if $canAccess('containers', 'remove')}
 				<ConfirmPopover
 					open={confirmPrune}
@@ -1778,6 +1819,13 @@
 										</div>
 									</Tooltip.Content>
 								</Tooltip.Root>
+							{/if}
+							{#if newerVersionsMap.has(container.id)}
+								<VersionUpdateBadge
+									newerVersion={newerVersionsMap.get(container.id)!}
+									variant="pill"
+									onclick={() => openVersionModal(container, newerVersionsMap.get(container.id)!)}
+								/>
 							{/if}
 							<span class="text-xs text-muted-foreground truncate" title={container.image}>{container.image}</span>
 						</div>
@@ -2440,6 +2488,12 @@
 	vulnerabilityCriteria={envHasScanning ? envVulnerabilityCriteria : 'never'}
 	onClose={handleBatchUpdateClose}
 	onComplete={handleBatchUpdateComplete}
+/>
+
+<VersionUpdateModal
+	bind:container={versionModalContainer}
+	newerVersion={versionModalNewer}
+	{envId}
 />
 
 <BatchOperationModal

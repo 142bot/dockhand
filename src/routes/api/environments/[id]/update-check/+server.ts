@@ -10,6 +10,15 @@ import { registerSchedule, unregisterSchedule } from '$lib/server/scheduler';
 
 /**
  * Get update check settings for an environment.
+ *
+ * @openapi
+ * summary: Get the automatic container-image update-check schedule for an environment
+ * path: id:integer! Environment id (from GET /api/environments)
+ * resp-200: {settings:{enabled:boolean!, cron:string!, autoUpdate:boolean!, vulnerabilityCriteria:string!}!}
+ * resp-200-example: {"settings":{"enabled":false,"cron":"0 4 * * *","autoUpdate":false,"vulnerabilityCriteria":"never"}}
+ * resp-403: Permission denied (RBAC 'environments:view' missing)
+ * resp-404: Environment not found
+ * resp-500: Unexpected error while loading the settings
  */
 export const GET: RequestHandler = async ({ params, cookies }) => {
 	const auth = await authorize(cookies);
@@ -44,6 +53,16 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 
 /**
  * Save update check settings for an environment.
+ *
+ * @openapi
+ * summary: Save the automatic image update-check schedule for an environment (registers/unregisters the croner job)
+ * path: id:integer! Environment id (from GET /api/environments)
+ * body: {enabled:boolean, cron:string, autoUpdate:boolean, vulnerabilityCriteria:string, checkPinnedVersions:boolean, semverMaxBump:string, semverMatchFlavor:boolean, semverIncludePrerelease:boolean}
+ * body-example: {"enabled":true,"cron":"0 4 * * *","autoUpdate":false,"vulnerabilityCriteria":"never","checkPinnedVersions":true,"semverMaxBump":"minor","semverMatchFlavor":true,"semverIncludePrerelease":false}
+ * resp-200: {success:boolean!, settings:{enabled:boolean!, cron:string!, autoUpdate:boolean!, vulnerabilityCriteria:string!}!}
+ * resp-403: Permission denied (RBAC 'environments:edit' missing)
+ * resp-404: Environment not found
+ * resp-500: Unexpected error while saving the settings
  */
 export const POST: RequestHandler = async ({ params, request, cookies }) => {
 	const auth = await authorize(cookies);
@@ -66,7 +85,11 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 			enabled: data.enabled ?? false,
 			cron: data.cron || '0 4 * * *',
 			autoUpdate: data.autoUpdate ?? false,
-			vulnerabilityCriteria: data.vulnerabilityCriteria || 'never'
+			vulnerabilityCriteria: data.vulnerabilityCriteria || 'never',
+			checkPinnedVersions: data.checkPinnedVersions ?? false,
+			semverMaxBump: data.semverMaxBump || 'major',
+			semverMatchFlavor: data.semverMatchFlavor ?? true,
+			semverIncludePrerelease: data.semverIncludePrerelease ?? false
 		};
 
 		// Save settings to database

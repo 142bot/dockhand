@@ -15,8 +15,11 @@ import {
 	saveVulnerabilityScan,
 	clearPendingContainerUpdates,
 	addPendingContainerUpdate,
-	removePendingContainerUpdate
+	removePendingContainerUpdate,
+	getPendingContainerUpdates
 } from '../../db';
+import { checkNewerVersion } from '../../semver/check';
+import type { NewerVersion } from '../../semver/find-newer';
 import {
 	listContainers,
 	inspectContainer,
@@ -107,6 +110,32 @@ export async function runEnvUpdateCheckJob(
 		await log(`Starting update check for environment: ${env.name}`);
 		await log(`Auto-update mode: ${config.autoUpdate ? 'ON' : 'OFF'}`);
 
+		// Semver "newer version tag" detection rides this same pass when enabled.
+		const semverEnabled = !!config.checkPinnedVersions;
+		const semverOptions = {
+			maxBump: config.semverMaxBump ?? 'major',
+			matchFlavor: config.semverMatchFlavor ?? true,
+			includePrerelease: config.semverIncludePrerelease ?? false
+		} as const;
+		// Remember the target we last surfaced per container, so we only notify when
+		// a NEW newer version appears - not on every scheduled run. Read before clear.
+		const previousSemverTargets = new Map<string, string>();
+		if (semverEnabled) {
+			try {
+				for (const row of await getPendingContainerUpdates(environmentId)) {
+					if (row.newerVersion) {
+						try {
+							const nv = JSON.parse(row.newerVersion) as NewerVersion;
+							previousSemverTargets.set(row.containerId, nv.tag);
+						} catch { /* ignore malformed */ }
+					}
+				}
+			} catch { /* non-fatal */ }
+		}
+		// Collected here so a single notification can summarise all newly-found versions.
+		const newSemverFindings: { containerName: string; imageName: string; newerVersion: NewerVersion }[] = [];
+		const semverByContainer = new Map<string, NewerVersion>();
+
 		// Clear pending updates at the start - we'll re-add as we discover updates
 		await clearPendingContainerUpdates(environmentId);
 
@@ -182,18 +211,64 @@ export async function runEnvUpdateCheckJob(
 						newDigest: result.registryDigest,
 						oldImageConfig
 					});
-					// Add to pending table immediately - will be removed on successful update
-					await addPendingContainerUpdate(environmentId, container.id, container.name, imageName);
 					await log(`    UPDATE AVAILABLE`);
 					await log(`      Current: ${result.currentDigest?.substring(0, 24) || 'unknown'}...`);
 					await log(`      New:     ${result.registryDigest?.substring(0, 24) || 'unknown'}...`);
 				} else {
 					await log(`    Up to date`);
 				}
+
+				// Newer-version-tag (semver) detection - independent of the digest check.
+				// Skips floating tags without a registry call. Never throws.
+				if (semverEnabled) {
+					const newer = await checkNewerVersion(imageName, semverOptions).catch(() => null);
+					if (newer) {
+						semverByContainer.set(container.id, newer);
+						await log(`    NEWER VERSION: ${newer.tag} (${newer.bump})`);
+						if (previousSemverTargets.get(container.id) !== newer.tag) {
+							newSemverFindings.push({ containerName: container.name, imageName, newerVersion: newer });
+						}
+					}
+				}
 			} catch (err: any) {
 				await log(`  [${container.name}] Error: ${err.message}`);
 				errorCount++;
 			}
+		}
+
+		// Persist pending rows once per container, merging the digest update and the
+		// semver suggestion so a pure-semver container still gets a (badge) row.
+		const pendingContainerIds = new Set<string>([
+			...updatesAvailable.map((u) => u.containerId),
+			...semverByContainer.keys()
+		]);
+		for (const cid of pendingContainerIds) {
+			const digest = updatesAvailable.find((u) => u.containerId === cid);
+			const semver = semverByContainer.get(cid) ?? null;
+			const container = containers.find((c) => c.id === cid);
+			await addPendingContainerUpdate(
+				environmentId,
+				cid,
+				digest?.containerName ?? container?.name ?? cid,
+				digest?.imageName ?? container?.image ?? '',
+				{ hasImageUpdate: !!digest, newerVersion: semver }
+			);
+		}
+
+		// Notify about NEW newer-version tags (advisory, never auto-applied). Fires
+		// independently of digest updates, and only for versions not surfaced last
+		// run - so a daily cron won't re-notify the same suggestion.
+		if (newSemverFindings.length > 0) {
+			const lines = newSemverFindings
+				.map((f) => `- ${f.containerName} (${f.imageName}): newer version ${f.newerVersion.tag} (${f.newerVersion.bump})`)
+				.join('\n');
+			await log('');
+			await log(`Newer version tags: ${newSemverFindings.length} new`);
+			await sendEventNotification('newer_version_available', {
+				title: `Newer version tag${newSemverFindings.length !== 1 ? 's' : ''} available on ${env.name}`,
+				message: `${newSemverFindings.length} container${newSemverFindings.length !== 1 ? 's have' : ' has'} a newer version tag published (advisory - not auto-applied):\n${lines}`,
+				type: 'info'
+			}, environmentId);
 		}
 
 		// Summary
@@ -205,8 +280,9 @@ export async function runEnvUpdateCheckJob(
 		await log(`Errors: ${errorCount}`);
 
 		if (updatesAvailable.length === 0) {
-			await log('All containers are up to date');
-			// Pending updates already cleared at start, nothing to add
+			await log('No digest updates');
+			// Any semver (newer-version) rows were already persisted + notified above;
+			// there's just no digest work to do, so skip the auto-update path.
 			await updateScheduleExecution(execution.id, {
 				status: 'success',
 				completedAt: new Date().toISOString(),

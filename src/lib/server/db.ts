@@ -973,6 +973,7 @@ export const NOTIFICATION_EVENT_TYPES = [
 	{ id: 'auto_update_failed', label: 'Auto-update failed', description: 'Container auto-update failed (pull error, start error)', group: 'auto_update', scope: 'environment' },
 	{ id: 'auto_update_blocked', label: 'Auto-update blocked', description: 'Update blocked due to vulnerability criteria', group: 'auto_update', scope: 'environment' },
 	{ id: 'updates_detected', label: 'Updates detected', description: 'Container image updates are available (scheduled check)', group: 'auto_update', scope: 'environment' },
+	{ id: 'newer_version_available', label: 'Newer version tag', description: 'A newer version tag is published for a pinned image (semver, advisory)', group: 'auto_update', scope: 'environment' },
 	{ id: 'batch_update_success', label: 'Batch update completed', description: 'Scheduled container updates completed successfully', group: 'auto_update', scope: 'environment' },
 
 	// Git stack events (environment-scoped)
@@ -4867,6 +4868,12 @@ export interface EnvUpdateCheckSettings {
 	cron: string;
 	autoUpdate: boolean;
 	vulnerabilityCriteria: VulnerabilityCriteria;
+	// Semver (newer-version-tag) detection — optional so pre-existing rows (which
+	// never had these) parse as "off" without any migration.
+	checkPinnedVersions?: boolean;
+	semverMaxBump?: 'patch' | 'minor' | 'major';
+	semverMatchFlavor?: boolean;
+	semverIncludePrerelease?: boolean;
 }
 
 export async function getEnvUpdateCheckSettings(envId: number): Promise<EnvUpdateCheckSettings | null> {
@@ -5443,8 +5450,15 @@ export async function addPendingContainerUpdate(
 	environmentId: number,
 	containerId: string,
 	containerName: string,
-	currentImage: string
+	currentImage: string,
+	// A row can exist for a digest update, a newer-version-tag (semver) suggestion,
+	// or both. Both flags default to the classic "digest update only" shape so
+	// existing callers keep working unchanged.
+	options: { hasImageUpdate?: boolean; newerVersion?: unknown | null } = {}
 ): Promise<void> {
+	const hasImageUpdate = options.hasImageUpdate ?? true;
+	const newerVersion = options.newerVersion != null ? JSON.stringify(options.newerVersion) : null;
+	const now = new Date().toISOString();
 	// Use insert with onConflictDoUpdate for upsert behavior
 	await db.insert(pendingContainerUpdates)
 		.values({
@@ -5452,14 +5466,18 @@ export async function addPendingContainerUpdate(
 			containerId,
 			containerName,
 			currentImage,
-			checkedAt: new Date().toISOString()
+			hasImageUpdate,
+			newerVersion,
+			checkedAt: now
 		})
 		.onConflictDoUpdate({
 			target: [pendingContainerUpdates.environmentId, pendingContainerUpdates.containerId],
 			set: {
 				containerName,
 				currentImage,
-				checkedAt: new Date().toISOString()
+				hasImageUpdate,
+				newerVersion,
+				checkedAt: now
 			}
 		});
 }
