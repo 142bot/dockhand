@@ -1,5 +1,45 @@
 [
   {
+    "version": "1.0.43",
+    "date": "",
+    "comingSoon": true,
+    "changes": [
+      {
+        "type": "feature",
+        "text": "Bitwarden Secrets Manager as a secret provider via an operator-installed bws client (PR#1416, @StefanSa)"
+      },
+      {
+        "type": "feature",
+        "text": "Proton Pass as a secret provider via an operator-installed pass-cli client"
+      },
+      {
+        "type": "feature",
+        "text": "Infisical: Universal Auth (Machine Identity) as well as a static token (#1398, @strausmann)"
+      },
+      {
+        "type": "feature",
+        "text": "detect newer version tags for pinned images and show them as a badge with release notes (#1176)"
+      },
+      {
+        "type": "feature",
+        "text": "OpenAPI spec at /api/docs with a Scalar viewer, opt-in via FEAT_API_DOCS (#814, PR#1342, @strausmann)"
+      },
+      {
+        "type": "fix",
+        "text": "concurrent git syncs sharing an SSH credential no longer fail on a missing temp key (#1413, PR#1143, @HoroTW)"
+      },
+      {
+        "type": "fix",
+        "text": "backup notifications show a real title and message instead of \"undefined\" (#1414)"
+      },
+      {
+        "type": "fix",
+        "text": "adopting a stack over the API rejects a compose path not on Dockhand's filesystem (#1375)"
+      }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.43"
+  },
+  {
     "version": "1.0.42",
     "date": "2026-08-16",
     "changes": [
