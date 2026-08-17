@@ -215,6 +215,12 @@ function parseScannerDnsStorage(raw: string | null | undefined): string[] {
 	return trimmed.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * @openapi
+ * summary: Get global (instance-wide) general settings
+ * resp-401: Not authenticated
+ * resp-500: Failed to load settings
+ */
 export const GET: RequestHandler = async ({ cookies }) => {
 	const auth = await authorize(cookies);
 	// UI preferences (time format, date format) should be available to all authenticated users
@@ -391,6 +397,14 @@ export const GET: RequestHandler = async ({ cookies }) => {
 	}
 };
 
+/**
+ * @openapi
+ * summary: Update global general settings (all fields optional; only supplied keys are written)
+ * description: A large flat settings bag - theme/fonts, scanner defaults, cleanup schedules, event/metrics collection, editor options (e.g. editorIndentGuides), and more.
+ * body: {animateIcons:boolean, editorIndentGuides:boolean, coloredActionButtons:boolean, lightTheme:string, darkTheme:string, defaultTimezone:string, logBufferSizeKb:integer, externalStackPaths:string}
+ * resp-403: Permission denied (needs settings:edit)
+ * resp-500: Failed to save settings
+ */
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const auth = await authorize(cookies);
 	if (auth.authEnabled && !await auth.can('settings', 'edit')) {

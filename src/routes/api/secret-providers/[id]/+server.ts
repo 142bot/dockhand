@@ -11,6 +11,15 @@ import { redactProviderConfig } from '$lib/server/secretproviders/shared';
 import { authorize } from '$lib/server/authorize';
 import { auditSecretProvider } from '$lib/server/audit';
 
+/**
+ * @openapi
+ * summary: Get one secret provider with its non-secret config coordinates (the token is redacted out)
+ * path: id:integer The secret provider id
+ * resp-200: {id:integer!, name:string!, type:string!, config:object!}
+ * resp-400: Invalid secret provider ID
+ * resp-403: Permission denied (needs secrets:view)
+ * resp-404: Secret provider not found
+ */
 export const GET: RequestHandler = async ({ params, cookies }) => {
 	const auth = await authorize(cookies);
 	if (auth.authEnabled && !(await auth.can('secrets', 'view'))) {
@@ -33,6 +42,17 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	return json({ ...summary, config: redactProviderConfig(config) });
 };
 
+/**
+ * @openapi
+ * summary: Update a secret provider (name, type, and/or rotate its config); omitted fields are left unchanged
+ * path: id:integer The secret provider id
+ * body: {name:string, type:string, config:object}
+ * resp-200: {id:integer!, name:string!, type:string!}
+ * resp-400: Invalid ID, empty name, unknown type, config not an object, or the name already exists
+ * resp-403: Permission denied (needs secrets:edit)
+ * resp-404: Secret provider not found
+ * resp-500: Failed to update secret provider
+ */
 export const PUT: RequestHandler = async (event) => {
 	const { params, request, cookies } = event;
 	const auth = await authorize(cookies);
@@ -92,6 +112,16 @@ export const PUT: RequestHandler = async (event) => {
 	}
 };
 
+/**
+ * @openapi
+ * summary: Delete a secret provider
+ * path: id:integer The secret provider id
+ * resp-200: {success:boolean!}
+ * resp-400: Invalid secret provider ID
+ * resp-403: Permission denied (needs secrets:delete)
+ * resp-404: Secret provider not found
+ * resp-500: Failed to delete secret provider
+ */
 export const DELETE: RequestHandler = async (event) => {
 	const { params, cookies } = event;
 	const auth = await authorize(cookies);

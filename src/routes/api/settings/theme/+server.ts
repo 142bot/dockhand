@@ -20,6 +20,12 @@ const DEFAULT_THEME_SETTINGS = {
 	editorIndentGuides: false
 };
 
+/**
+ * @openapi
+ * summary: Public theme + editor display settings (used by the login page before auth)
+ * resp-200: object
+ * resp-200-desc: Light/dark theme, fonts, and editor display flags (e.g. editorIndentGuides)
+ */
 export const GET: RequestHandler = async () => {
 	try {
 		const [

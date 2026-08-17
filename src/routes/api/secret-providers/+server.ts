@@ -5,6 +5,13 @@ import { hasProvider } from '$lib/server/secretproviders';
 import { authorize } from '$lib/server/authorize';
 import { auditSecretProvider } from '$lib/server/audit';
 
+/**
+ * @openapi
+ * summary: List configured secret providers (summaries never include the decrypted config)
+ * resp-200: array<{id:integer!, name:string!, type:string!}>
+ * resp-403: Permission denied (needs secrets:view)
+ * resp-500: Failed to fetch secret providers
+ */
 export const GET: RequestHandler = async ({ cookies }) => {
 	const auth = await authorize(cookies);
 	if (auth.authEnabled && !(await auth.can('secrets', 'view'))) {
@@ -21,6 +28,15 @@ export const GET: RequestHandler = async ({ cookies }) => {
 	}
 };
 
+/**
+ * @openapi
+ * summary: Create a secret provider (Vault, Infisical, Doppler, 1Password Connect)
+ * body: {name:string!, type:string!, config:object!}
+ * resp-201: {id:integer!, name:string!, type:string!}
+ * resp-400: Name and type are required, unknown provider type, config missing, or a provider with this name already exists
+ * resp-403: Permission denied (needs secrets:create)
+ * resp-500: Failed to create secret provider
+ */
 export const POST: RequestHandler = async (event) => {
 	const { request, cookies } = event;
 	const auth = await authorize(cookies);
