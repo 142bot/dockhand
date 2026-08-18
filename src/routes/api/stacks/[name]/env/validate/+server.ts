@@ -143,7 +143,9 @@ export const POST: RequestHandler = async ({ params, url, cookies, request }) =>
 
 		// If no compose in body, try to load from saved file
 		if (!composeContent) {
-			const savedCompose = await getStackComposeFile(stackName);
+			// Pass the env id so an environment-scoped stack_sources row is found - without
+			// it getStackSource scopes to environment_id IS NULL and the fallback misses (#1423).
+			const savedCompose = await getStackComposeFile(stackName, envIdNum);
 			if (savedCompose.success && savedCompose.content) {
 				composeContent = savedCompose.content;
 			}
