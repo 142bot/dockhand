@@ -26,6 +26,9 @@ import {
 
 import type { NotificationPayload, NotificationResult } from './shared';
 export type { NotificationPayload, NotificationResult } from './shared';
+// The pure docker-action -> event-type map lives in events-core (unit-testable).
+import { mapActionToEventType } from './events-core';
+export { mapActionToEventType } from './events-core';
 
 import { sendSmtpNotification } from './smtp';
 import { sendDiscord } from './discord';
@@ -166,21 +169,6 @@ export async function testNotification(setting: NotificationSettingData): Promis
 	return { success: false, error: 'Unknown notification type' };
 }
 
-// Map Docker action to notification event type
-function mapActionToEventType(action: string): NotificationEventType | null {
-	const mapping: Record<string, NotificationEventType> = {
-		'start': 'container_started',
-		'stop': 'container_stopped',
-		'restart': 'container_restarted',
-		'die': 'container_exited',
-		'kill': 'container_exited',
-		'oom': 'container_oom',
-		'health_status: unhealthy': 'container_unhealthy',
-		'health_status: healthy': 'container_healthy',
-		'pull': 'image_pulled'
-	};
-	return mapping[action] || null;
-}
 
 // Scanner image patterns to exclude from notifications
 const SCANNER_IMAGE_PATTERNS = [
@@ -257,10 +245,7 @@ export async function sendEventNotification(
 	payload: NotificationPayload,
 	environmentId?: number
 ): Promise<{ success: boolean; sent: number }> {
-	let enrichedPayload: NotificationPayload = {
-		...payload,
-		eventType
-	};
+	let enrichedPayload: NotificationPayload = { ...payload, eventType };
 	if (environmentId) {
 		const env = await getEnvironment(environmentId);
 		if (env) {
