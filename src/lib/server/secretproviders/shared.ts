@@ -144,7 +144,9 @@ export interface InfisicalConfig {
 	clientId?: string;
 	/** Universal Auth (Machine Identity) client secret. Paired with clientId. */
 	clientSecret?: string;
-	projectId: string;
+	/** Required for Universal Auth / static non-`st.` tokens; optional for a service
+	 *  token (`st.*`), which carries its own project. */
+	projectId?: string;
 	environment?: string;
 	path?: string;
 }

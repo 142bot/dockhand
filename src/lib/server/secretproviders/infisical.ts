@@ -43,20 +43,42 @@ function baseUrl(host: string): string {
 }
 
 /**
- * Builds the /api/v3/secrets/raw URL for a workspace/environment/path. The
- * secret path defaults to `/` (Infisical's root) when nothing is configured.
+ * A service token (`st.<id>.<secret>`) carries its own project, environment and
+ * secretPath (single non-glob scope), so `/secrets/raw` infers them from the token
+ * and workspaceId/environment are optional. Every other auth shape (Universal Auth
+ * access token, static non-`st.` token) requires workspaceId.
+ */
+function isServiceToken(token: string | undefined): boolean {
+	return !!token && token.trim().startsWith('st.');
+}
+
+/**
+ * Infisical infers project + environment from a service token only when its scope is
+ * single and non-glob. A multi-scope or glob-path token still needs an explicit
+ * workspaceId, and Infisical answers a bare 400 - so when a service-token config with no
+ * projectId gets a 4xx, point the user at the real cause.
+ */
+function multiScopeHint(statusCode: number, config: InfisicalConfig): string {
+	if (statusCode === 400 && isServiceToken(config.token) && !config.projectId?.trim()) {
+		return ' - a multi-scope or glob-path service token still needs a Project ID; set it in the provider config';
+	}
+	return '';
+}
+
+/**
+ * Builds the /api/v3/secrets/raw URL. The secret path defaults to `/` (Infisical's
+ * root). workspaceId/environment are omitted when empty so a service token can infer
+ * them from its own scope.
  */
 function rawSecretsUrl(
 	host: string,
-	workspaceId: string,
-	environment: string,
+	workspaceId: string | undefined,
+	environment: string | undefined,
 	secretPath: string
 ): string {
-	const params = new URLSearchParams({
-		workspaceId,
-		environment,
-		secretPath: secretPath || '/'
-	});
+	const params = new URLSearchParams({ secretPath: secretPath || '/' });
+	if (workspaceId) params.set('workspaceId', workspaceId);
+	if (environment) params.set('environment', environment);
 	return `${baseUrl(host)}/api/v3/secrets/raw?${params.toString()}`;
 }
 
@@ -218,10 +240,13 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 		if (authError) {
 			return { ok: false, error: authError };
 		}
-		if (!projectId) {
+		// A service token carries its own project + environment, so they are optional
+		// for it; every other auth shape still requires them.
+		const serviceToken = isServiceToken(config.token);
+		if (!projectId && !serviceToken) {
 			return { ok: false, error: 'Project ID is empty' };
 		}
-		if (!environment) {
+		if (!environment && !serviceToken) {
 			return { ok: false, error: 'Environment is empty' };
 		}
 
@@ -245,7 +270,7 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 			}
 			if (rawBody) console.warn(`[Infisical] testConnection ${statusCode}: ${rawBody}`);
 			const safe = parseProviderError(rawBody);
-			return { ok: false, error: `Infisical returned HTTP ${statusCode}${safe ? `: ${safe}` : ''}` };
+			return { ok: false, error: `Infisical returned HTTP ${statusCode}${safe ? `: ${safe}` : ''}${multiScopeHint(statusCode, config)}` };
 		} catch (e: unknown) {
 			const message = e instanceof Error ? e.message : String(e);
 			return { ok: false, error: message || 'Connection failed' };
@@ -271,10 +296,13 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 		if (authError) {
 			throw new Error(`[Infisical] ${authError}`);
 		}
-		if (!projectId) {
+		// A service token carries its own project + environment; every other auth shape
+		// still requires them.
+		const serviceToken = isServiceToken(config.token);
+		if (!projectId && !serviceToken) {
 			throw new Error('[Infisical] Project ID is required for a bulk pull');
 		}
-		if (!environment) {
+		if (!environment && !serviceToken) {
 			throw new Error('[Infisical] Environment is required for a bulk pull');
 		}
 
@@ -291,7 +319,7 @@ export const infisicalProvider: SecretProvider<InfisicalConfig> = {
 			// Drain the body, log it server-side, but never reflect it to the client.
 			const detail = await body.text().catch(() => '');
 			if (detail) console.warn(`[Infisical] bulk pull ${statusCode}: ${detail}`);
-			throw new Error(`[Infisical] Bulk pull failed with HTTP ${statusCode}`);
+			throw new Error(`[Infisical] Bulk pull failed with HTTP ${statusCode}${multiScopeHint(statusCode, config)}`);
 		}
 
 		const payload = (await body.json()) as RawSecretsResponse;

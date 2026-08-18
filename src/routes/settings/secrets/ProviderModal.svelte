@@ -12,6 +12,9 @@
 		label: string;
 		type: 'text' | 'password';
 		required: boolean;
+		/** When present, overrides `required` based on the current form values (e.g. a
+		 *  field that is only required for some auth shapes). */
+		requiredWhen?: (config: Record<string, string>) => boolean;
 		placeholder?: string;
 		hint?: string;
 	}
@@ -43,8 +46,11 @@
 			{ key: 'token', label: 'Access token', type: 'password', required: false, placeholder: 'st...', hint: 'A static service/access token. Leave blank to use Universal Auth (client ID + secret) below instead.' },
 			{ key: 'clientId', label: 'Universal Auth client ID', type: 'text', required: false, placeholder: 'machine identity client id', hint: 'A Machine Identity client ID. Pair with the client secret; leave blank if using a static token.' },
 			{ key: 'clientSecret', label: 'Universal Auth client secret', type: 'password', required: false, placeholder: 'machine identity client secret', hint: 'The Machine Identity client secret. Exchanged for a short-lived token via Universal Auth.' },
-			{ key: 'projectId', label: 'Project ID', type: 'text', required: true, placeholder: 'workspace / project id', hint: 'The workspace/project the secrets live in.' },
-			{ key: 'environment', label: 'Environment', type: 'text', required: true, placeholder: 'prod', hint: 'Environment slug, e.g. prod / staging.' },
+			// A single-scope service token (st.*) carries its own project + environment, so
+			// both are optional for it. A multi-scope or glob-path service token, and every
+			// other auth shape (Universal Auth, static non-st token), still need them.
+			{ key: 'projectId', label: 'Project ID', type: 'text', required: true, requiredWhen: (c) => !(c.token ?? '').trim().startsWith('st.'), placeholder: 'workspace / project id', hint: 'The workspace/project the secrets live in. Optional for a single-scope service token (st.), which already targets one project; a multi-scope token still needs it.' },
+			{ key: 'environment', label: 'Environment', type: 'text', required: true, requiredWhen: (c) => !(c.token ?? '').trim().startsWith('st.'), placeholder: 'prod', hint: 'Environment slug, e.g. prod / staging. Optional for a single-scope service token (st.).' },
 			{ key: 'path', label: 'Secret path', type: 'text', required: false, placeholder: '/', hint: 'Folder path within the project. Defaults to /.' },
 		],
 		vault: [
@@ -209,12 +215,16 @@
 		return config;
 	}
 
+	function fieldRequired(field: ProviderField, config: Record<string, string>): boolean {
+		return field.requiredWhen ? field.requiredWhen(config) : field.required;
+	}
+
 	function missingRequired(config: Record<string, string>, editing = false): string | null {
 		for (const field of fields) {
 			// On edit a blank secret (password) field keeps the stored value, so it is
 			// allowed to be empty; non-secret required fields still must be present.
 			if (editing && field.type === 'password') continue;
-			if (field.required && !config[field.key]) {
+			if (fieldRequired(field, config) && !config[field.key]) {
 				return `${field.label} is required`;
 			}
 		}
@@ -404,7 +414,7 @@
 			<div class="grid {stackConfigFields ? 'grid-cols-1' : 'grid-cols-2'} gap-x-4 gap-y-3 content-start" style="min-height: 21rem;">
 				{#each fields as field (field.key)}
 					<div class="space-y-1.5 self-start {fields.length === 1 ? 'col-span-full' : ''}">
-						<FieldLabel label={field.label} forId={`provider-${field.key}`} required={field.required} />
+						<FieldLabel label={field.label} forId={`provider-${field.key}`} required={fieldRequired(field, formConfig)} />
 						<Input
 							id={`provider-${field.key}`}
 							type={field.type}
