@@ -82,13 +82,24 @@ export async function fetchReleaseNotes(
 	if (wanted.length === 0) return [];
 
 	const pageSizeParam = src.kind === 'github' ? 'per_page' : 'limit';
+	// Unauthenticated GitHub is 60 req/h per IP; a token raises it to 5000/h. Optional -
+	// only sent to github.com, so a self-hoster who sets it gets far more headroom (and CI
+	// stops rate-limiting). Never sent to a Gitea/Forgejo forge (different auth).
+	const ghToken =
+		src.kind === 'github'
+			? (process.env.DOCKHAND_GITHUB_TOKEN || process.env.GITHUB_TOKEN || '').trim()
+			: '';
+	const headers: Record<string, string> = {
+		Accept: 'application/json',
+		'User-Agent': 'dockhand'
+	};
+	if (ghToken) headers.Authorization = `Bearer ${ghToken}`;
+
 	const collected: GithubRelease[] = [];
 	try {
 		for (let page = 1; page <= MAX_PAGES; page++) {
 			const url = `${src.apiBase}?${pageSizeParam}=${PER_PAGE}&page=${page}`;
-			const res = await fetchImpl(url, {
-				headers: { Accept: 'application/json', 'User-Agent': 'dockhand' }
-			});
+			const res = await fetchImpl(url, { headers });
 			if (!res.ok) break;
 			const batch = (await res.json()) as GithubRelease[];
 			if (!Array.isArray(batch) || batch.length === 0) break;
