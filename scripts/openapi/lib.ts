@@ -66,6 +66,11 @@ export interface HandlerAnnotation {
 	path: Record<string, ParamAnnotation>;
 	body?: MiniSchema;
 	bodyExample?: unknown;
+	/** A non-JSON raw request body, e.g. `body-raw: application/x-tar The image tar`. */
+	bodyRaw?: { mediaType: string; description: string };
+	/** A multipart/form-data body: one file field, e.g.
+	 *  `body-multipart: files:binary[]! One or more files`. */
+	bodyMultipart?: { field: string; type: string; array: boolean; required: boolean; description: string };
 	responses: Record<string, ResponseAnnotation>;
 	/** Raw block text, kept only for --check's orphan-block diagnostics. */
 	raw: string;
@@ -217,6 +222,14 @@ export function parseMiniSchema(str: string): MiniSchema {
 	function parseType(): MiniSchema {
 		skipWs();
 		if (s[i] === '{') return parseObject();
+		if (s[i] === '[') {
+			// bracket array form: [T]
+			i++;
+			const items = parseType();
+			skipWs();
+			if (s[i] === ']') i++;
+			return { kind: 'array', items };
+		}
 		if (s.slice(i, i + 6) === 'array<') {
 			i += 6;
 			const items = parseType();
@@ -226,6 +239,9 @@ export function parseMiniSchema(str: string): MiniSchema {
 		}
 		const start = i;
 		while (i < s.length && /[a-zA-Z0-9_]/.test(s[i])) i++;
+		// Guarantee forward progress: an unrecognized char (not a word, brace, or
+		// bracket) must still advance i, or the parseObject loop spins forever.
+		if (i === start) i++;
 		const word = s.slice(start, i) || 'string';
 		if (word === 'integer' || word === 'number' || word === 'boolean' || word === 'string') return { kind: word };
 		return { kind: 'string' };
@@ -371,6 +387,27 @@ export function parseAnnotations(content: string): Partial<Record<HttpMethod, Ha
 					annotation.bodyExample = JSON.parse(rawValue);
 				} catch {
 					/* ignore malformed example */
+				}
+				continue;
+			}
+			if (key === 'body-raw') {
+				// `body-raw: <media-type> <description>` - a non-JSON raw body.
+				const rm = rawValue.match(/^(\S+)\s*(.*)$/);
+				if (rm) annotation.bodyRaw = { mediaType: rm[1], description: rm[2].trim() };
+				continue;
+			}
+			if (key === 'body-multipart') {
+				// `body-multipart: <field>:<type>[]? [!] <description>` - a multipart body.
+				const mm = rawValue.match(/^([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)(\[\])?(!)?\s*(.*)$/);
+				if (mm) {
+					const [, field, type, array, required, description] = mm;
+					annotation.bodyMultipart = {
+						field,
+						type,
+						array: !!array,
+						required: !!required,
+						description: description.trim()
+					};
 				}
 				continue;
 			}

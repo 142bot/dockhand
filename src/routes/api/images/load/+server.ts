@@ -21,6 +21,7 @@ import type { RequestHandler } from './$types';
  * @openapi
  * summary: Load a Docker image from an uploaded tar (docker load) for air-gapped hosts
  * description: The request body is the raw image tar (Content-Type application/x-tar), streamed straight to the daemon without buffering. Local/socket or direct TCP only; Hawser is rejected.
+ * body-raw: application/x-tar The raw image tar, streamed to the daemon (docker load)
  * query: env:integer Target environment id
  * resp-200: {success:boolean!, loaded:string}
  * resp-200-desc: loaded echoes the daemon's final line, e.g. "Loaded image: alpine:3.20"

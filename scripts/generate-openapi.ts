@@ -247,20 +247,36 @@ function runCheck(): number {
 	}
 	if (orphanMarkers.length > 0) hardFailures++;
 
-	// Gate 6: spec validity (write both outputs, lint the static copy)
+	// Gate 6: spec validity (write both outputs, lint the static copy) via the LOCAL
+	// @redocly/cli (a devDependency). It is NOT invoked through `npx --yes`: an on-demand
+	// npx fetch in a fresh CI container hung this gate for HOURS. Resolve the binary from
+	// node_modules; if it is not installed, SKIP (infra), do not block the release. A lint
+	// that RUNS and exits non-zero is a real spec failure and is hard.
 	writeSpecOutputs(spec);
-	let validatorsOk = true;
-	try {
-		execFileSync('npx', ['--yes', '@redocly/cli@2.43.1', 'lint', STATIC_OUT_FILE, '--format=summary'], {
-			cwd: ROOT_DIR,
-			stdio: 'pipe'
-		});
-	} catch (err: any) {
-		validatorsOk = false;
-		report.push(`[Gate 6] @redocly/cli lint FAILED:\n${err.stdout?.toString().slice(-1000) ?? err.message}`);
+	const redoclyBin = join(ROOT_DIR, 'node_modules', '.bin', 'redocly');
+	if (!existsSync(redoclyBin)) {
+		report.push(`[Gate 6] Spec validity: SKIPPED (@redocly/cli not installed - run npm i)`);
+	} else {
+		try {
+			execFileSync(redoclyBin, ['lint', STATIC_OUT_FILE, '--format=summary'], {
+				cwd: ROOT_DIR,
+				stdio: 'pipe',
+				timeout: 120_000, // belt-and-suspenders: never hang the gate
+				env: { ...process.env, REDOCLY_TELEMETRY: 'off', REDOCLY_SUPPRESS_UPDATE_NOTICE: '1' }
+			});
+			report.push(`[Gate 6] Spec validity (@redocly/cli lint): OK`);
+		} catch (err: any) {
+			// A spawn/timeout failure (ENOENT/ETIMEDOUT) is infra -> skip; a non-zero exit
+			// from a lint that actually ran is a real spec problem -> hard fail.
+			if (err.code === 'ETIMEDOUT' || err.code === 'ENOENT') {
+				report.push(`[Gate 6] Spec validity: SKIPPED (validator did not run: ${err.code})`);
+			} else {
+				const out = (err.stdout?.toString() ?? '') + (err.stderr?.toString() ?? '');
+				report.push(`[Gate 6] @redocly/cli lint FAILED:\n${out.slice(-1000)}`);
+				hardFailures++;
+			}
+		}
 	}
-	report.push(`[Gate 6] Spec validity (@redocly/cli lint): ${validatorsOk ? 'OK' : 'FAILED'}`);
-	if (!validatorsOk) hardFailures++;
 
 	console.log(`\n=== OpenAPI --check Report ===`);
 	for (const line of report) console.log(line);

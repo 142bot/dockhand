@@ -140,6 +140,33 @@ export function buildSpec({ routes, fileContents, annotationsByPath, isPublicFn,
 					required: true,
 					content: { 'application/json': { schema: miniSchemaToOpenApi(annotation.body), example } }
 				};
+			} else if (annotation?.bodyRaw) {
+				// A non-JSON raw body (e.g. application/x-tar): binary string schema.
+				const schema: Record<string, unknown> = { type: 'string', format: 'binary' };
+				if (annotation.bodyRaw.description) schema.description = annotation.bodyRaw.description;
+				requestBody = {
+					required: true,
+					content: { [annotation.bodyRaw.mediaType]: { schema } }
+				};
+			} else if (annotation?.bodyMultipart) {
+				// A multipart/form-data body with a single (possibly array) file field.
+				const mp = annotation.bodyMultipart;
+				const fieldSchema: Record<string, unknown> = mp.array
+					? { type: 'array', items: { type: mp.type === 'binary' ? 'string' : mp.type, format: mp.type === 'binary' ? 'binary' : undefined } }
+					: { type: mp.type === 'binary' ? 'string' : mp.type, format: mp.type === 'binary' ? 'binary' : undefined };
+				if (mp.description) fieldSchema.description = mp.description;
+				requestBody = {
+					required: true,
+					content: {
+						'multipart/form-data': {
+							schema: {
+								type: 'object',
+								properties: { [mp.field]: fieldSchema },
+								...(mp.required ? { required: [mp.field] } : {})
+							}
+						}
+					}
+				};
 			} else if (['POST', 'PUT', 'PATCH'].includes(method) && analysis.bodyFields.length > 0) {
 				const properties = Object.fromEntries(analysis.bodyFields.map((f) => [f, { type: 'string' }]));
 				requestBody = {
