@@ -51,8 +51,8 @@
 		"test:integration": "bun test tests/api-smoke.test.ts tests/crud-operations.test.ts tests/scheduling.test.ts tests/hawser-connection.test.ts",
 		"test:e2e": "npx playwright test tests/e2e/",
 		"generate:legal": "node scripts/generate-legal-pages.ts",
-		"generate:openapi": "npx tsx scripts/generate-openapi.ts",
-		"generate:openapi:check": "npx tsx scripts/generate-openapi.ts --check"
+		"generate:openapi": "tsx scripts/generate-openapi.ts",
+		"generate:openapi:check": "tsx scripts/generate-openapi.ts --check"
 	},
 	"dependencies": {
 		"@1password/sdk": "0.4.1-beta.1",
@@ -104,6 +104,7 @@
 		"@layerstack/tailwind": "^1.0.1",
 		"@lucide/svelte": "^0.562.0",
 		"@playwright/test": "1.57.0",
+		"@redocly/cli": "^2.43.1",
 		"@scalar/api-reference": "1.64.0",
 		"@sveltejs/adapter-node": "^5.2.0",
 		"@sveltejs/kit": "2.50.0",

@@ -6,6 +6,10 @@
     "changes": [
       {
         "type": "feature",
+        "text": "Compose validate - a preflight linter & validator for compose files"
+      },
+      {
+        "type": "feature",
         "text": "Bitwarden Secrets Manager as a secret provider via an operator-installed bws client (PR#1416, @StefanSa)"
       },
       {
@@ -25,6 +29,10 @@
         "text": "OpenAPI spec at /api/docs with a Scalar viewer, opt-in via FEAT_API_DOCS (#814, PR#1342, @strausmann)"
       },
       {
+        "type": "feature",
+        "text": "Zabbix notification channel via the history.push API (PR#1419, @snesterkov)"
+      },
+      {
         "type": "fix",
         "text": "concurrent git syncs sharing an SSH credential no longer fail on a missing temp key (#1413, PR#1143, @HoroTW)"
       },
@@ -34,7 +42,23 @@
       },
       {
         "type": "fix",
-        "text": "adopting a stack over the API rejects a compose path not on Dockhand's filesystem (#1375)"
+        "text": "git stacks accept a compose/env path with a leading slash (#1355)"
+      },
+      {
+        "type": "fix",
+        "text": "container update notifications now fire properly (#1424)"
+      },
+      {
+        "type": "fix",
+        "text": "Infisical: the project ID is optional when using a service token - it's taken from the token (#1398)"
+      },
+      {
+        "type": "fix",
+        "text": "API: adopting a stack rejects a compose path not on Dockhand's filesystem (#1375)"
+      },
+      {
+        "type": "fix",
+        "text": "API: validating a stack's env vars no longer drops the environment id (#1423)"
       }
     ],
     "imageTag": "fnsys/dockhand:v1.0.43"
