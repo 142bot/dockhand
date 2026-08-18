@@ -15,6 +15,7 @@ import * as tls from 'node:tls';
 import { createHash } from 'node:crypto';
 import { pumpWebStreamToWritable } from './stream-pump';
 import { computeRequestTimeoutMs } from './backups/request-timeout';
+import { helperWaitDeadline } from './helper-wait-core';
 import type { Environment } from './db';
 import { getSetting } from './db';
 import { getAdditionalVolumeBinds, dedupeVolumesForRecreate } from './mount-dedupe';
@@ -5056,11 +5057,13 @@ export async function runContainerWithStreaming(options: {
 			// Applies to every helper this function runs — backup/restore AND the image scanner.
 			let exitCode: number | undefined;
 			if (process.env.HELPERS_WAIT_MODE !== 'wait') {
-				// Bound by the caller's timeout (backup passes a long 'data' tier, the
-				// scanner passes 600_000). Fall back to 1h so poll mode never hangs.
-				// One line so the log confirms which exit-signal mode is active (#1344).
+				// Bounded by the caller's timeout (scanner passes 600_000, probes 60_000);
+				// the backup helper passes 0 = unbounded. One line so the log confirms which
+				// exit-signal mode is active (#1344).
 				console.log(`[runContainerWithStreaming] Awaiting exit of ${options.name ?? containerId.slice(0, 12)} via POLL mode`);
-				const deadline = Date.now() + (options.timeout && options.timeout > 0 ? options.timeout : 3_600_000);
+				// A positive timeout caps the wait; 0/omitted is UNBOUNDED (see helper-wait-core:
+				// the backup helper passes 0 on purpose, bounded by cancel + the reaper - #1382).
+				const deadline = helperWaitDeadline(options.timeout, Date.now());
 				while (exitCode === undefined && Date.now() < deadline) {
 					try {
 						const insp = await dockerFetch(`/containers/${containerId}/json`, {}, options.envId);
