@@ -48,7 +48,8 @@ export interface EffectiveComposeResult {
 export async function renderEffectiveCompose(
 	stackName: string,
 	composeContent: string,
-	dockerHost?: string | null
+	dockerHost?: string | null,
+	envVars?: Record<string, string>
 ): Promise<EffectiveComposeResult> {
 	let dir: string | undefined;
 	try {
@@ -65,7 +66,7 @@ export async function renderEffectiveCompose(
 		// about - far better than the raw ${VAR} source.
 		const args = [...base.slice(1), '-f', file, 'config', '--format', 'json'];
 
-		const { code, stdout, stderr } = await execDocker(base[0], args, dir);
+		const { code, stdout, stderr } = await execDocker(base[0], args, dir, envVars);
 
 		if (code === 0) {
 			let effective: Record<string, unknown> | undefined;
@@ -135,7 +136,8 @@ export function parseConfigErrors(stderr: string): Finding[] {
 function execDocker(
 	exe: string,
 	args: string[],
-	cwd: string
+	cwd: string,
+	envVars?: Record<string, string>
 ): Promise<{ code: number; stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
 		const outChunks: Buffer[] = [];
@@ -149,7 +151,10 @@ function execDocker(
 			cwd,
 			shell: false,
 			stdio: ['ignore', 'pipe', 'pipe'],
-			env: { PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' }
+			// The stack's env vars (incl. secrets) are injected so `${VAR}` interpolation
+			// resolves the same way it will at deploy time - otherwise config reports a
+			// spurious "VAR is not set" for every variable Dockhand supplies via shell env.
+			env: { PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', ...(envVars ?? {}) }
 		});
 
 		const timeout = setTimeout(() => {

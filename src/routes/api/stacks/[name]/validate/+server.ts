@@ -37,7 +37,7 @@ async function resolveDockerHostForConfig(envIdNum: number | undefined): Promise
  * summary: Run the Compose Validate preflight linter on a compose file and return findings with severities and line numbers (requires the 'view' permission)
  * path: name:string! Stack name (used to exclude the stack's own containers from cross-stack collision checks)
  * query: env:integer Environment ID for the context-aware checks (from GET /api/environments)
- * body: {compose:string!, config:{disabled:[string], severity:object}}
+ * body: {compose:string!, config:{disabled:[string], severity:object}, envVars:object}
  * body-example: {"compose":"services:\n  web:\n    image: nginx:latest\n    ports: [\"8080:80\"]\n"}
  * resp-200: {findings:[{ruleId:string!, severity:string!, message:string!, hint:string, service:string, line:integer, fix:object, fixDescription:string}]!, counts:{error:integer!, warn:integer!, info:integer!}!}
  * resp-200-example: {"findings":[{"ruleId":"LATEST_TAG","severity":"warn","message":"\"web\" uses `:latest` (nginx:latest)","hint":"Pin a version tag for reproducible deploys and to enable newer-version detection.","service":"web","line":3}],"counts":{"error":0,"warn":1,"info":0}}
@@ -56,22 +56,37 @@ export const POST: RequestHandler = async ({ cookies, url, params, request }) =>
 	const body = (await request.json().catch(() => ({}))) as {
 		compose?: string;
 		config?: ValidateConfig;
+		envVars?: Record<string, string>;
+		existing?: boolean;
 	};
 	const compose = typeof body.compose === 'string' ? body.compose : '';
 	if (!compose.trim()) {
 		return json({ error: 'compose content is required' }, { status: 400 });
 	}
 
+	// The editor's current env vars (incl. secrets) so `docker compose config` resolves
+	// `${VAR}` the same way a deploy will, instead of reporting a spurious "VAR not set".
+	const envVars: Record<string, string> = {};
+	if (body.envVars && typeof body.envVars === 'object') {
+		for (const [k, v] of Object.entries(body.envVars)) {
+			if (typeof k === 'string' && typeof v === 'string') envVars[k] = v;
+		}
+	}
+
 	const stackName = decodeURIComponent(params.name);
+	// Self-exclusion (don't flag the stack's own running containers/ports as collisions)
+	// applies ONLY when editing an existing stack. A brand-new stack has no own containers,
+	// so a name/port clash with a running stack of the same name must still be reported.
+	const selfStackName = body.existing ? stackName : null;
 
 	// Best-effort live context; degrades to an empty context if the env is unreachable
 	// (context-aware rules then simply produce nothing - the linter still runs).
-	const ctx = await buildValidateContext(envIdNum ?? null, stackName).catch(() => ({}));
+	const ctx = await buildValidateContext(envIdNum ?? null, selfStackName).catch(() => ({}));
 
 	// `docker compose config` gives the authoritative schema/syntax verdict; the local
 	// rule catalog adds the context-aware checks config can't do. Config degrades to a
 	// pure local lint if the daemon/CLI is unreachable, so this never blocks.
 	const dockerHost = await resolveDockerHostForConfig(envIdNum);
-	const report = await runValidateWithConfig(stackName, compose, ctx, dockerHost, body.config ?? {});
+	const report = await runValidateWithConfig(stackName, compose, ctx, dockerHost, body.config ?? {}, envVars);
 	return json(report);
 };

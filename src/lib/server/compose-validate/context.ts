@@ -18,7 +18,7 @@ export { deriveContextFromLists } from './context-core';
  */
 export async function buildValidateContext(
 	envId: number | null | undefined,
-	selfStackName?: string
+	selfStackName?: string | null
 ): Promise<ValidateContext> {
 	const [containers, networks, volumes] = await Promise.all([
 		listContainers(true, envId).catch(() => []),

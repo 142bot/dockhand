@@ -10,24 +10,30 @@ import type { ValidateContext } from './types';
 export interface CtxContainer {
 	name: string;
 	ports?: Array<{ PublicPort?: number }>;
+	labels?: Record<string, string>;
 }
 
 /**
  * Given the env's containers/networks/volumes, produce the ValidateContext. Excludes
- * THIS stack's own containers so a re-deploy isn't flagged as a self-collision (compose
- * names its containers `<project>-<svc>-<n>`).
+ * THIS stack's own containers so a re-deploy isn't flagged as a self-collision. Match on
+ * the compose project LABEL first (authoritative - Docker stamps it on every compose
+ * container regardless of a custom container_name), then fall back to the default
+ * `<project>-<svc>-<n>` name prefix for containers that lack the label.
  */
 export function deriveContextFromLists(
 	containers: CtxContainer[],
 	networkNames: string[],
 	volumeNames: string[],
-	selfStackName?: string
+	selfStackName?: string | null
 ): ValidateContext {
 	const usedHostPorts = new Set<number>();
 	const hostPortOwners = new Map<number, string>();
 	const existingContainerNames = new Set<string>();
 	for (const c of containers) {
-		const isSelf = !!selfStackName && c.name.startsWith(`${selfStackName}-`);
+		const isSelf =
+			!!selfStackName &&
+			(c.labels?.['com.docker.compose.project'] === selfStackName ||
+				c.name.startsWith(`${selfStackName}-`));
 		if (isSelf) continue;
 		existingContainerNames.add(c.name);
 		for (const p of c.ports || []) {
@@ -39,7 +45,7 @@ export function deriveContextFromLists(
 		}
 	}
 	return {
-		selfStackName,
+		selfStackName: selfStackName ?? undefined,
 		usedHostPorts,
 		hostPortOwners,
 		existingContainerNames,

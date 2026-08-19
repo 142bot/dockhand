@@ -100,11 +100,12 @@ export async function runValidateWithConfig(
 	composeSource: string,
 	ctx: ValidateContext = {},
 	dockerHost?: string | null,
-	config: ValidateConfig = {}
+	config: ValidateConfig = {},
+	envVars?: Record<string, string>
 ): Promise<ValidateReport> {
 	const local = runValidate(composeSource, ctx, config);
 
-	const cfg = await renderEffectiveCompose(stackName, composeSource, dockerHost);
+	const cfg = await renderEffectiveCompose(stackName, composeSource, dockerHost, envVars);
 
 	// If config produced schema errors, merge them in. If the file already failed to
 	// parse locally, prefer config's precise schema message but keep both.
