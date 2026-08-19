@@ -24,7 +24,7 @@ import { resolveNanoCpusConflict, resolvePodmanUsernsMode } from './hostconfig-r
 import { parseImageReference } from './registry/image-ref';
 export { parseImageReference } from './registry/image-ref';
 import { rebaseEnvOntoImage, rebaseLabelsOntoImage, rebaseCommand, describeEnvRebase, describeLabelRebase, type ImageEnvLabels } from './container-env-merge';
-import { encodeRegistryAuth } from './registry-auth';
+import { encodeRegistryAuth, fetchRegistryToken } from './registry-auth';
 import { isSystemContainer, classifyEmptyDigestImage, localDigestIsIndexChild } from './scheduler/tasks/update-utils';
 import { deepDiff } from '../utils/diff.js';
 import { getInstanceId } from './backups/identity';
@@ -3198,21 +3198,25 @@ async function getRegistryBearerToken(registry: string, repo: string): Promise<s
 		if (service) tokenUrl.searchParams.set('service', service);
 		if (scope) tokenUrl.searchParams.set('scope', scope);
 
-		const tokenHeaders: Record<string, string> = { 'User-Agent': 'Dockhand/1.0' };
-
-		// Add Basic auth header if we have credentials
-		if (credentials) {
-			const basicAuth = Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64');
-			tokenHeaders['Authorization'] = `Basic ${basicAuth}`;
-		}
-
-		const tokenResponse = await fetch(tokenUrl.toString(), {
-			headers: tokenHeaders
-		});
+		const authHeader = credentials
+			? `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`
+			: null;
+		const tokenResponse = await fetchRegistryToken(tokenUrl.toString(), authHeader);
 
 		if (!tokenResponse.ok) {
-			await tokenResponse.text(); // Consume body to release socket
-			console.error(`Token request failed: ${tokenResponse.status}`);
+			// Surface enough to diagnose without leaking the secret: the response
+			// body (truncated), the final URL, and the identity (username only).
+			const errBody = (await tokenResponse.text()).slice(0, 300).replace(/\s+/g, ' ').trim();
+			const finalNote = tokenResponse.url && tokenResponse.url !== tokenUrl.toString()
+				? ` (final ${new URL(tokenResponse.url).origin})`
+				: '';
+			const identity = credentials
+				? ` as ${credentials.username.slice(0, 4)}...(len=${credentials.username.length})`
+				: ' anonymously';
+			console.error(
+				`[Registry] Token request failed: ${tokenResponse.status} at ${tokenUrl.origin}${finalNote}, sent${identity}` +
+					(errBody ? ` - response: ${errBody}` : '')
+			);
 			return null;
 		}
 
@@ -3319,21 +3323,20 @@ export async function getRegistryAuthHeader(
 		if (service) tokenUrl.searchParams.set('service', service);
 		if (scope) tokenUrl.searchParams.set('scope', scope);
 
-		const tokenHeaders: Record<string, string> = { 'User-Agent': 'Dockhand/1.0' };
-
-		// Add Basic auth header if we have credentials
-		if (credentials) {
-			const basicAuth = Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64');
-			tokenHeaders['Authorization'] = `Basic ${basicAuth}`;
-		}
-
-		const tokenResponse = await fetch(tokenUrl.toString(), {
-			headers: tokenHeaders
-		});
+		const authHeader = credentials
+			? `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`
+			: null;
+		const tokenResponse = await fetchRegistryToken(tokenUrl.toString(), authHeader);
 
 		if (!tokenResponse.ok) {
-			const errorBody = await tokenResponse.text().catch(() => '');
-			console.error(`Token request failed: ${tokenResponse.status} - ${errorBody}`);
+			const errorBody = (await tokenResponse.text().catch(() => '')).slice(0, 300).replace(/\s+/g, ' ').trim();
+			const finalNote = tokenResponse.url && tokenResponse.url !== tokenUrl.toString()
+				? ` (final ${new URL(tokenResponse.url).origin})`
+				: '';
+			const identity = credentials
+				? ` as ${credentials.username.slice(0, 4)}...(len=${credentials.username.length})`
+				: ' anonymously';
+			console.error(`[Registry] Token request failed: ${tokenResponse.status} at ${tokenUrl.origin}${finalNote}, sent${identity}${errorBody ? ` - response: ${errorBody}` : ''}`);
 			return null;
 		}
 
