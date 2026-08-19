@@ -5,80 +5,16 @@
 <svg
 	viewBox="0 0 512 512"
 	xmlns="http://www.w3.org/2000/svg"
-	fill-rule="evenodd"
-	clip-rule="evenodd"
-	stroke-linejoin="round"
-	stroke-miterlimit="2"
+	xml:space="preserve"
 	class={className}
+	fill="currentColor"
+	aria-label="Proton Pass"
 >
-	<g transform="matrix(13.61103 0 0 13.61103 11 11)">
-		<clipPath id="protonpass__a"><path d="M0 0h36v36H0z" /></clipPath>
-		<g clip-path="url(#protonpass__a)" fill-rule="nonzero">
-			<path
-				d="M10.826 4.548C13.337 2.036 14.592.781 16.04.31a6.356 6.356 0 013.92 0c1.448.471 2.703 1.726 5.214 4.238l6.278 6.278c2.512 2.511 3.767 3.766 4.238 5.214a6.356 6.356 0 010 3.92c-.471 1.448-1.726 2.703-4.238 5.214l-6.278 6.278c-2.511 2.512-3.766 3.767-5.214 4.238a6.356 6.356 0 01-3.92 0c-1.448-.471-2.703-1.726-5.214-4.238l-1.181-1.323c-.714-.801-1.071-1.201-1.326-1.656a4.777 4.777 0 01-.492-1.291c-.113-.509-.113-1.045-.113-2.118V10.936c0-1.073 0-1.609.113-2.118.101-.452.266-.887.492-1.291.255-.455.612-.855 1.326-1.656l1.181-1.323z"
-				fill="url(#protonpass__radial2)"
-			/>
-			<path
-				d="M10.826 4.548C13.337 2.036 14.592.781 16.04.31a6.356 6.356 0 013.92 0c1.448.471 2.703 1.726 5.214 4.238l6.278 6.278c2.512 2.511 3.767 3.766 4.238 5.214a6.356 6.356 0 010 3.92c-.471 1.448-1.726 2.703-4.238 5.214l-6.278 6.278c-2.511 2.512-3.766 3.767-5.214 4.238a6.356 6.356 0 01-3.92 0c-1.448-.471-2.703-1.726-5.214-4.238l-1.181-1.323c-.714-.801-1.071-1.201-1.326-1.656a4.777 4.777 0 01-.492-1.291c-.113-.509-.113-1.045-.113-2.118V10.936c0-1.073 0-1.609.113-2.118.101-.452.266-.887.492-1.291.255-.455.612-.855 1.326-1.656l1.181-1.323z"
-				fill="url(#protonpass__linear3)"
-			/>
-			<path
-				d="M10.377 4.996c1.256-1.256 1.884-1.884 2.608-2.119a3.168 3.168 0 011.959 0c.724.235 1.352.863 2.608 2.119l9.416 9.416c1.256 1.256 1.884 1.884 2.119 2.608a3.168 3.168 0 010 1.959c-.235.724-.863 1.352-2.119 2.608l-9.416 9.416c-1.256 1.256-1.884 1.884-2.608 2.119a3.168 3.168 0 01-1.959 0c-.724-.235-1.352-.863-2.608-2.119l-5.829-5.829C2.036 22.663.781 21.407.31 19.959a6.353 6.353 0 010-3.919c.471-1.448 1.726-2.704 4.238-5.215l5.829-5.829z"
-				fill="url(#protonpass__radial4)"
-			/>
-		</g>
-	</g>
-	<defs>
-		<radialGradient
-			id="protonpass__radial2"
-			cx="0"
-			cy="0"
-			r="1"
-			gradientUnits="userSpaceOnUse"
-			gradientTransform="matrix(15.8615 -25.5243 39.9147 24.8041 10.865 36.702)"
-		>
-			<stop offset="0" stop-color="#ffd580" />
-			<stop offset=".09" stop-color="#f6c592" />
-			<stop offset=".21" stop-color="#ebb6a2" />
-			<stop offset=".32" stop-color="#dfa5af" />
-			<stop offset=".43" stop-color="#d397be" />
-			<stop offset=".53" stop-color="#c486cb" />
-			<stop offset=".65" stop-color="#b578d9" />
-			<stop offset=".77" stop-color="#a166e5" />
-			<stop offset=".89" stop-color="#8b57f2" />
-			<stop offset="1" stop-color="#704cff" />
-		</radialGradient>
-		<radialGradient
-			id="protonpass__radial4"
-			cx="0"
-			cy="0"
-			r="1"
-			gradientUnits="userSpaceOnUse"
-			gradientTransform="matrix(12.7582 -20.5304 32.1053 19.9512 8.225 33.042)"
-		>
-			<stop offset="0" stop-color="#ffd580" />
-			<stop offset=".09" stop-color="#f6c592" />
-			<stop offset=".21" stop-color="#ebb6a2" />
-			<stop offset=".32" stop-color="#dfa5af" />
-			<stop offset=".43" stop-color="#d397be" />
-			<stop offset=".53" stop-color="#c486cb" />
-			<stop offset=".65" stop-color="#b578d9" />
-			<stop offset=".77" stop-color="#a166e5" />
-			<stop offset=".89" stop-color="#8b57f2" />
-			<stop offset="1" stop-color="#704cff" />
-		</radialGradient>
-		<linearGradient
-			id="protonpass__linear3"
-			x1="0"
-			y1="0"
-			x2="1"
-			y2="0"
-			gradientUnits="userSpaceOnUse"
-			gradientTransform="scale(43.30457) rotate(80.696 .208 .048)"
-		>
-			<stop offset="0" stop-color="#6d4aff" />
-			<stop offset=".39" stop-color="#b39ffb" stop-opacity=".98" />
-			<stop offset="1" stop-color="#ffe8db" stop-opacity=".8" />
-		</linearGradient>
-	</defs>
+	<path
+		d="M154 64.7c35.7-35.7 53.6-53.6 74.2-60.3 18.1-5.9 37.6-5.9 55.7 0 20.6 6.7 38.4 24.5 74.2 60.3l89.3 89.3c35.7 35.7 53.6 53.6 60.3 74.2 5.9 18.1 5.9 37.6 0 55.7-6.7 20.6-24.6 38.4-60.3 74.2L358 447.3c-35.7 35.7-53.6 53.6-74.2 60.3-18.1 5.9-37.6 5.9-55.7 0-20.6-6.7-38.5-24.6-74.2-60.3l-16.8-18.8c-10.2-11.4-15.2-17.1-18.9-23.6-3.2-5.7-5.6-11.9-7-18.4-1.6-7.2-1.6-14.9-1.6-30.1V155.5c0-15.3 0-22.9 1.6-30.1 1.4-6.4 3.8-12.6 7-18.3 3.6-6.5 8.7-12.2 18.9-23.6z"
+		style="opacity:.5"
+	/>
+	<path
+		d="M147.6 71.1c17.9-17.9 26.8-26.8 37.1-30.1 9.1-2.9 18.8-2.9 27.9 0 10.3 3.3 19.2 12.3 37.1 30.1L383.5 205c17.9 17.9 26.8 26.8 30.1 37.1 2.9 9.1 2.9 18.8 0 27.9-3.3 10.3-12.3 19.2-30.1 37.1L249.6 440.9c-17.9 17.9-26.8 26.8-37.1 30.1-9.1 2.9-18.8 2.9-27.9 0-10.3-3.3-19.2-12.3-37.1-30.1L64.7 358C29 322.3 11.1 304.5 4.4 283.9c-5.9-18.1-5.9-37.6 0-55.7 6.7-20.6 24.5-38.5 60.3-74.2z"
+	/>
 </svg>

@@ -117,7 +117,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import { FieldLabel } from '$lib/components/ui/field-label';
 	import { Input } from '$lib/components/ui/input';
-	import { Plus, Check, RefreshCw, PlugZap, KeyRound } from 'lucide-svelte';
+	import { Plus, Check, RefreshCw, PlugZap, KeyRound, Info } from 'lucide-svelte';
 	import { scale } from 'svelte/transition';
 	import { backOut, cubicIn } from 'svelte/easing';
 	import { getProviderIcon } from '$lib/components/provider-icons';
@@ -429,20 +429,31 @@
 					</div>
 				{/each}
 			</div>
-			{#if formType === 'bitwarden'}
-				<p class="text-xs text-muted-foreground">
-					Bitwarden Secrets Manager requires an externally installed or mounted official
-					<code>bws</code> client at <code>/usr/local/bin/bws</code> (or an absolute
-					<code>DOCKHAND_BWS_PATH</code> process override).
-				</p>
-			{/if}
-			{#if formType === 'proton'}
-				<p class="text-xs text-muted-foreground">
-					Proton Pass requires an externally installed or mounted official
-					<code>pass-cli</code> client at <code>/usr/local/bin/pass-cli</code> (or an absolute
-					<code>DOCKHAND_PASS_CLI_PATH</code> process override). Supports both a bulk vault pull
-					and inline <code>pass://</code> references.
-				</p>
+			{#if formType === 'bitwarden' || formType === 'proton'}
+				<!-- Fixed min-height so switching between the bitwarden (shorter) and proton
+				     (taller) external-CLI notes doesn't jump the dialog's vertical size. -->
+				<div class="min-h-16">
+					{#if formType === 'bitwarden'}
+						<p class="flex items-start gap-2 text-xs text-muted-foreground">
+							<Info class="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+							<span>
+								Bitwarden Secrets Manager requires an externally installed or mounted official
+								<code>bws</code> client at <code>/usr/local/bin/bws</code> (or an absolute
+								<code>DOCKHAND_BWS_PATH</code> process override).
+							</span>
+						</p>
+					{:else}
+						<p class="flex items-start gap-2 text-xs text-muted-foreground">
+							<Info class="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+							<span>
+								Proton Pass requires an externally installed or mounted official
+								<code>pass-cli</code> client at <code>/usr/local/bin/pass-cli</code> (or an absolute
+								<code>DOCKHAND_PASS_CLI_PATH</code> process override). Supports both a bulk vault pull
+								and inline <code>pass://</code> references.
+							</span>
+						</p>
+					{/if}
+				</div>
 			{/if}
 			<p class="text-xs text-muted-foreground">
 				Configuration is stored encrypted.{#if isEditing}
