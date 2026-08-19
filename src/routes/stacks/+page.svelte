@@ -36,6 +36,7 @@
 	import FileBrowserModal from '../containers/FileBrowserModal.svelte';
 	import BatchUpdateModal from '../containers/BatchUpdateModal.svelte';
 	import CheckUpdatesButton from '$lib/components/CheckUpdatesButton.svelte';
+	import DismissUpdatesButton from '$lib/components/DismissUpdatesButton.svelte';
 	import VersionUpdateBadge from '$lib/components/VersionUpdateBadge.svelte';
 	import VersionUpdateModal from '$lib/components/VersionUpdateModal.svelte';
 	import LogsPanel from '../logs/LogsPanel.svelte';
@@ -783,6 +784,12 @@
 		stacks.some((s) => s.updatesAvailable || (s.newerVersionCount ?? 0) > 0) ||
 			failedUpdateCheckIds.size > 0
 	);
+	// Counts for the compact dismiss: stacks with a digest update, and total containers
+	// with a newer version tag - each shown with its icon, mirroring the containers page.
+	const stackDigestCount = $derived(stacks.filter((s) => s.updatesAvailable).length);
+	const stackNewerVersionCount = $derived(
+		stacks.reduce((sum, s) => sum + (s.newerVersionCount ?? 0), 0)
+	);
 
 	// Dismiss both the amber "update available" and red "check failed" indicators.
 	// Update-available lives in the shared pending_container_updates table (same
@@ -1482,18 +1489,12 @@
 					fetchStacks();
 				}}
 			/>
-			{#if hasUpdateIndicators}
-				<Button
-					size="sm"
-					variant="ghost"
-					onclick={dismissStackUpdates}
-					class="h-8 gap-1 text-muted-foreground hover:text-destructive"
-					title="Dismiss all update indicators"
-				>
-					<X class="w-3.5 h-3.5" />
-					Clear
-				</Button>
-			{/if}
+			<DismissUpdatesButton
+				show={hasUpdateIndicators}
+				digestCount={stackDigestCount}
+				newerVersionCount={stackNewerVersionCount}
+				onDismiss={dismissStackUpdates}
+			/>
 			<Button
 				size="sm"
 				variant="outline"

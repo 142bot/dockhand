@@ -78,6 +78,7 @@
 	import FileBrowserModal from './FileBrowserModal.svelte';
 	import BatchUpdateModal from './BatchUpdateModal.svelte';
 	import CheckUpdatesButton from '$lib/components/CheckUpdatesButton.svelte';
+	import DismissUpdatesButton from '$lib/components/DismissUpdatesButton.svelte';
 	import BatchOperationModal from '$lib/components/BatchOperationModal.svelte';
 	import VersionUpdateBadge from '$lib/components/VersionUpdateBadge.svelte';
 	import VersionUpdateModal from '$lib/components/VersionUpdateModal.svelte';
@@ -131,6 +132,7 @@
 	// pseudo-status (#1063), which ANDs with actual Docker states.
 	const STATUS_FILTER_STORAGE_KEY = 'dockhand-containers-status-filter';
 	const UPDATE_AVAILABLE_FILTER_VALUE = 'update-available';
+	const NEWER_VERSION_FILTER_VALUE = 'newer-version';
 	let statusFilter = $state<string[]>([]);
 
 	// Status types with icons for filter and table
@@ -325,25 +327,39 @@
 	const containersWithFailedCheckSet = $derived(new Set($containerStore.failedUpdateIds));
 	const failedUpdateErrors = $derived($containerStore.failedUpdateErrors);
 
+	// Any update indicator on the page - digest updates, newer-version tags, or failed
+	// checks. Drives the compact "dismiss all" (×) button.
+	const hasUpdateIndicators = $derived(
+		$containerStore.pendingUpdateIds.length > 0 ||
+		hasNewerVersions ||
+		$containerStore.failedUpdateIds.length > 0
+	);
+
 	// Newer-version-tag (semver) suggestions from the last check, keyed by container ID.
 	const newerVersionsMap = $derived($containerStore.newerVersions);
 
 	// Filter dropdown entries: real statuses plus the synthetic
 	// "update-available" entry, only offered once we know about a pending
 	// update — picking it on an empty set would just empty the list (#1063).
-	const filterOptions = $derived(
-		containersWithUpdatesSet.size > 0
-			? [
-					...statusTypes,
-					{
-						value: UPDATE_AVAILABLE_FILTER_VALUE,
-						label: 'Update available',
-						icon: CircleArrowUp,
-						color: 'text-amber-500'
-					}
-				]
-			: statusTypes
-	);
+	const filterOptions = $derived([
+		...statusTypes,
+		...(containersWithUpdatesSet.size > 0
+			? [{
+					value: UPDATE_AVAILABLE_FILTER_VALUE,
+					label: 'Update available',
+					icon: CircleArrowUp,
+					color: 'text-amber-500'
+				}]
+			: []),
+		...(hasNewerVersions
+			? [{
+					value: NEWER_VERSION_FILTER_VALUE,
+					label: 'Newer version',
+					icon: Tag,
+					color: 'text-amber-500'
+				}]
+			: [])
+	]);
 
 	// Drop the 'update-available' filter when no pending updates remain —
 	// otherwise the user has no way to deselect it (dropdown hides the
@@ -354,6 +370,11 @@
 			containersWithUpdatesSet.size === 0
 		) {
 			statusFilter = statusFilter.filter((v) => v !== UPDATE_AVAILABLE_FILTER_VALUE);
+		}
+		// Same guard for the newer-version filter: drop it once no container has a
+		// newer version, or the dropdown hides the entry and the list stays empty.
+		if (statusFilter.includes(NEWER_VERSION_FILTER_VALUE) && !hasNewerVersions) {
+			statusFilter = statusFilter.filter((v) => v !== NEWER_VERSION_FILTER_VALUE);
 		}
 	});
 
@@ -745,13 +766,19 @@
 		// Filter by status. The synthetic 'update-available' value (#1063)
 		// is split off so it ANDs with real-state selections instead of
 		// being treated like another Docker state.
-		const stateValues = statusFilter.filter((v) => v !== UPDATE_AVAILABLE_FILTER_VALUE);
+		const stateValues = statusFilter.filter(
+			(v) => v !== UPDATE_AVAILABLE_FILTER_VALUE && v !== NEWER_VERSION_FILTER_VALUE
+		);
 		const updatesOnly = statusFilter.includes(UPDATE_AVAILABLE_FILTER_VALUE);
+		const newerVersionOnly = statusFilter.includes(NEWER_VERSION_FILTER_VALUE);
 		if (stateValues.length > 0) {
 			result = result.filter((c) => stateValues.includes(c.state.toLowerCase()));
 		}
 		if (updatesOnly) {
 			result = result.filter((c) => containersWithUpdatesSet.has(c.id));
+		}
+		if (newerVersionOnly) {
+			result = result.filter((c) => newerVersionsMap.has(c.id));
 		}
 
 		// Filter by search query
@@ -1445,34 +1472,16 @@
 						>
 							<CircleArrowUp class="w-3.5 h-3.5" />
 							Update all ({updatableContainersCount})
-							<button
-								type="button"
-								onclick={(e) => { e.stopPropagation(); dismissPendingUpdates(); }}
-								class="-mr-1 text-[12px] leading-none rounded-full hover:bg-destructive/20 hover:text-destructive transition-colors opacity-40 hover:opacity-100"
-								title="Dismiss all update indicators"
-							>×</button>
 						</Button>
 					{/snippet}
 				</ConfirmPopover>
 				{/if}
-				{#if hasNewerVersions}
-					<!-- Newer version tags. Shown whether or not digest updates also exist.
-					     Only carries its own dismiss (×) when there's no "Update all" button
-					     (whose × already clears both) - so we never show two dismiss controls. -->
-					<Button
-						size="sm"
-						variant="outline"
-						class="border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:border-amber-500"
-						onclick={updatableContainersCount === 0 ? dismissPendingUpdates : undefined}
-						title={updatableContainersCount === 0 ? 'Dismiss version indicators' : 'Containers running a pinned tag with a newer version published'}
-					>
-						<Tag class="w-3.5 h-3.5" />
-						{$containerStore.newerVersions.size} newer version{$containerStore.newerVersions.size !== 1 ? 's' : ''}
-						{#if updatableContainersCount === 0}
-							<span class="ml-1 text-[12px] leading-none opacity-40">×</span>
-						{/if}
-					</Button>
-				{/if}
+				<DismissUpdatesButton
+					show={hasUpdateIndicators}
+					digestCount={updatableContainersCount}
+					newerVersionCount={$containerStore.newerVersions.size}
+					onDismiss={dismissPendingUpdates}
+				/>
 				{#if $canAccess('containers', 'remove')}
 				<ConfirmPopover
 					open={confirmPrune}

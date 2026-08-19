@@ -2,9 +2,9 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { authorize } from '$lib/server/authorize';
 import { listContainers, inspectContainer, checkImageUpdateAvailable } from '$lib/server/docker';
-import { clearPendingContainerUpdates, addPendingContainerUpdate, getPendingContainerUpdates, getEnvUpdateCheckSettings } from '$lib/server/db';
+import { clearPendingContainerUpdates, addPendingContainerUpdate, getPendingContainerUpdates, getGlobalSemverConfig } from '$lib/server/db';
 import { isSystemContainer, isPodmanInfraContainer } from '$lib/server/scheduler/tasks/update-utils';
-import { isUpdateDisabledByLabel, isHiddenByLabel } from '$lib/server/container-labels';
+import { isUpdateDisabledByLabel, isHiddenByLabel, getVersionPatternOverride } from '$lib/server/container-labels';
 import { createJobResponse } from '$lib/server/sse';
 import { checkNewerVersion } from '$lib/server/semver/check';
 import type { NewerVersion } from '$lib/server/semver/find-newer';
@@ -106,15 +106,15 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 
 		send('progress', { checked: 0, total: containers.length });
 
-		// Semver "newer version tag" detection is an opt-in branch on this same pass.
-		// Read the env's update-check config once; if checkPinnedVersions is on, each
+		// Semver "newer version tag" detection is a global setting; when enabled, each
 		// pinned-version container is also compared against the registry's tag list.
-		const envSettings = envIdNum ? await getEnvUpdateCheckSettings(envIdNum) : null;
-		const semverEnabled = !!envSettings?.checkPinnedVersions;
+		// The scheduled check reads the same config.
+		const semverConfig = await getGlobalSemverConfig();
+		const semverEnabled = semverConfig.enabled;
 		const semverOptions = {
-			maxBump: envSettings?.semverMaxBump ?? 'major',
-			matchFlavor: envSettings?.semverMatchFlavor ?? true,
-			includePrerelease: envSettings?.semverIncludePrerelease ?? false
+			maxBump: semverConfig.maxBump,
+			matchFlavor: semverConfig.matchFlavor,
+			includePrerelease: semverConfig.includePrerelease
 		} as const;
 
 		// Check container for updates
@@ -153,7 +153,10 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 				// Newer-version-tag detection (opt-in). Skips instantly for floating tags,
 				// so it only hits the registry for pinned versions. Never throws.
 				const newerVersion = semverEnabled
-					? await checkNewerVersion(imageName, semverOptions).catch(() => null)
+					? await checkNewerVersion(imageName, {
+							...semverOptions,
+							versionPattern: getVersionPatternOverride(inspectData.Config?.Labels)
+						}).catch(() => null)
 					: null;
 
 				return {

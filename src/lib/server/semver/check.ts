@@ -20,7 +20,9 @@ export async function checkNewerVersion(
 	const { tag } = parseImageReference(imageRef);
 
 	// Floating tag -> nothing to compare, and we skip the registry call entirely.
-	if (!parseTag(tag)) return null;
+	// Parse with the same override find-newer will use, so a custom-scheme tag
+	// isn't wrongly dismissed as floating before the registry fetch.
+	if (!parseTag(tag, options.versionPattern ?? null)) return null;
 
 	const tags = await listVersionTags(imageRef);
 	return findNewerVersionTag(tag, tags, options);

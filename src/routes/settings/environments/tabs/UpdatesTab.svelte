@@ -5,7 +5,6 @@
 	import CronEditor from '$lib/components/cron-editor.svelte';
 	import TimezoneSelector from '$lib/components/TimezoneSelector.svelte';
 	import VulnerabilityCriteriaSelector, { type VulnerabilityCriteria } from '$lib/components/VulnerabilityCriteriaSelector.svelte';
-	import SemverCheckConfig from '$lib/components/SemverCheckConfig.svelte';
 	import { CircleFadingArrowUp, CircleArrowUp, RefreshCw, Info, Trash2 } from 'lucide-svelte';
 	import { formatDateTime } from '$lib/stores/settings';
 	import { formatBytes } from '$lib/utils/format';
@@ -18,11 +17,6 @@
 		updateCheckAutoUpdate: boolean;
 		updateCheckVulnerabilityCriteria: VulnerabilityCriteria;
 		scannerEnabled: boolean;
-		// Semver (newer-version-tag) detection — rides the same update check
-		semverEnabled: boolean;
-		semverMaxBump: 'patch' | 'minor' | 'major';
-		semverMatchFlavor: boolean;
-		semverIncludePrerelease: boolean;
 		// Image prune settings
 		imagePruneLoading: boolean;
 		imagePruneEnabled: boolean;
@@ -41,10 +35,6 @@
 		updateCheckAutoUpdate = $bindable(),
 		updateCheckVulnerabilityCriteria = $bindable(),
 		scannerEnabled,
-		semverEnabled = $bindable(),
-		semverMaxBump = $bindable(),
-		semverMatchFlavor = $bindable(),
-		semverIncludePrerelease = $bindable(),
 		imagePruneLoading,
 		imagePruneEnabled = $bindable(),
 		imagePruneCron = $bindable(),
@@ -128,13 +118,6 @@
 					<span>You'll receive notifications when updates are available. Containers won't be modified.</span>
 				{/if}
 			</div>
-
-			<SemverCheckConfig
-				bind:enabled={semverEnabled}
-				bind:maxBump={semverMaxBump}
-				bind:matchFlavor={semverMatchFlavor}
-				bind:includePrerelease={semverIncludePrerelease}
-			/>
 		{/if}
 	{/if}
 </div>

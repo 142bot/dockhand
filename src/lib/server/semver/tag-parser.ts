@@ -23,8 +23,18 @@ export interface ParsedTag {
 	parts: number[];
 }
 
-/** Parse a tag into its version parts, or null when it has no version (`latest`, `stable`, a sha). */
-export function parseTag(tag: string): ParsedTag | null {
+/**
+ * Parse a tag into its version parts, or null when it has no version (`latest`,
+ * `stable`, a sha). An optional `override` regex (from a `dockhand.version.pattern`
+ * label) replaces the default detection for images whose tags don't match the
+ * generic dotted-number shape (e.g. a CalVer-plus-hash like `2024.12.5-a1b2c3d`).
+ * The override must capture numeric named groups `major`/`minor`/`patch` (patch
+ * optional, plus any further `p4`/`p5`); those become `parts`. A tag the override
+ * doesn't match is treated as a non-version (null) - same as a floating tag.
+ */
+export function parseTag(tag: string, override?: RegExp | null): ParsedTag | null {
+	if (override) return parseWithOverride(tag, override);
+
 	const match = VERSION_RE.exec(tag);
 	if (!match) return null;
 
@@ -34,6 +44,36 @@ export function parseTag(tag: string): ParsedTag | null {
 		prefix: tag.slice(0, match.index),
 		suffix: tag.slice(match.index + version.length),
 		parts: version.split('.').map(Number)
+	};
+}
+
+// Numeric named groups the override may capture, in version order. Only `major`
+// is required; the rest fill in as present.
+const OVERRIDE_PART_GROUPS = ['major', 'minor', 'patch', 'p4', 'p5'] as const;
+
+function parseWithOverride(tag: string, override: RegExp): ParsedTag | null {
+	const match = override.exec(tag);
+	if (!match || !match.groups) return null;
+
+	const parts: number[] = [];
+	for (const name of OVERRIDE_PART_GROUPS) {
+		const raw = match.groups[name];
+		if (raw === undefined) break; // stop at the first absent segment
+		const n = Number(raw);
+		if (!Number.isFinite(n)) return null; // a captured non-number is not a version
+		parts.push(n);
+	}
+	if (parts.length === 0) return null; // no `major` captured -> not a version
+
+	// The whole match is the "version"; prefix/suffix are the text around it so
+	// flavor matching (e.g. `-alpine`) keeps working under an override too.
+	const version = match[0];
+	const index = match.index;
+	return {
+		version,
+		prefix: tag.slice(0, index),
+		suffix: tag.slice(index + version.length),
+		parts
 	};
 }
 
@@ -92,4 +132,38 @@ export function compareParts(a: ParsedTag, b: ParsedTag): number {
 		if (diff !== 0) return diff;
 	}
 	return 0;
+}
+
+// The `dockhand.version.pattern` label value must start with this scheme, leaving
+// room for future non-regex strategies (e.g. `calver:`) under the same label.
+const VERSION_PATTERN_SCHEME = 'regex:';
+const MAX_PATTERN_LENGTH = 300;
+// Nested quantifiers (`(a+)+`, `(a*)*`, `(a+)*`) are the classic catastrophic-
+// backtracking shape. Refuse them rather than run an attacker-supplied ReDoS on
+// every tag. A conservative reject: a group closed with a quantifier immediately
+// followed by another quantifier.
+const NESTED_QUANTIFIER_RE = /[+*}]\s*\)[+*?]|\([^)]*[+*][^)]*\)[+*]/;
+
+/**
+ * Compile a `dockhand.version.pattern` label value into a RegExp for parseTag's
+ * override, or null when absent/invalid. Never throws - a bad pattern degrades to
+ * the default parser (null), so a typo can't break the update check. Requires the
+ * `regex:` scheme, a `major` named group, a sane length, and rejects obvious
+ * catastrophic-backtracking shapes (the value comes from an untrusted image label).
+ */
+export function compileVersionPattern(value: string | undefined | null): RegExp | null {
+	if (!value) return null;
+	const trimmed = value.trim();
+	if (!trimmed.startsWith(VERSION_PATTERN_SCHEME)) return null;
+
+	const source = trimmed.slice(VERSION_PATTERN_SCHEME.length);
+	if (source.length === 0 || source.length > MAX_PATTERN_LENGTH) return null;
+	if (!source.includes('(?<major>')) return null; // must yield at least a major
+	if (NESTED_QUANTIFIER_RE.test(source)) return null; // ReDoS guard
+
+	try {
+		return new RegExp(source);
+	} catch {
+		return null; // invalid regex -> fall back to the default parser
+	}
 }

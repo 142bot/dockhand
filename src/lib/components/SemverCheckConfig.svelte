@@ -118,7 +118,7 @@
 	{#if enabled && !isFloating}
 		<div class="ml-6 flex items-start gap-2 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
 			<Info class="w-3.5 h-3.5 mt-0.5 shrink-0" />
-			<span>A newer version shows as a badge on the container — it is <strong class="text-foreground font-semibold">never auto-applied</strong>. Bump the tag in your compose yourself.</span>
+			<span>A newer version shows as a badge on the container — it is <strong class="text-foreground font-semibold">never auto-applied</strong>.</span>
 		</div>
 	{/if}
 </div>

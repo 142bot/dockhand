@@ -25,6 +25,12 @@ export interface FindNewerOptions {
 	includePrerelease?: boolean;
 	/** Require the same flavor/suffix (`-alpine`). Default true — the #1 noise-killer. */
 	matchFlavor?: boolean;
+	/**
+	 * A compiled `dockhand.version.pattern` override (from compileVersionPattern).
+	 * When set, both the current tag and every candidate are parsed with it, so an
+	 * image with a non-standard tag scheme can still be compared. Absent = default.
+	 */
+	versionPattern?: RegExp | null;
 }
 
 export interface NewerVersion {
@@ -65,15 +71,16 @@ export function findNewerVersionTag(
 	allTags: string[],
 	options: FindNewerOptions = {}
 ): NewerVersion | null {
-	const current = parseTag(currentTag);
+	const { maxBump = 'major', includePrerelease = false, matchFlavor = true, versionPattern = null } = options;
+
+	const current = parseTag(currentTag, versionPattern);
 	if (!current) return null; // floating tag — not a version, never suggest.
 
-	const { maxBump = 'major', includePrerelease = false, matchFlavor = true } = options;
 	const maxRank = BUMP_RANK[maxBump];
 	const currentIsPrerelease = isPrerelease(current);
 
 	const candidates = allTags
-		.map((tag) => ({ tag, parsed: parseTag(tag) }))
+		.map((tag) => ({ tag, parsed: parseTag(tag, versionPattern) }))
 		.filter((c): c is { tag: string; parsed: ParsedTag } => c.parsed !== null)
 		.filter((c) => prefixMatches(c.parsed.prefix, current.prefix))
 		.filter((c) => !matchFlavor || flavorMatches(c.parsed, current))
