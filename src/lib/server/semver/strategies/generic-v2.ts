@@ -6,6 +6,7 @@
  * works anonymously for public repos.
  */
 import { getRegistryAuthHeader } from '../../docker';
+import { isSafeRegistryHost } from '../../registry-auth';
 
 /** Stop after this many pages — a guard against pathological repos, not a real limit. */
 const MAX_PAGES = 50;
@@ -26,6 +27,10 @@ export async function fetchGenericV2Tags(
 	repo: string,
 	credentials?: { username: string; password: string } | null
 ): Promise<string[]> {
+	// SSRF guard: `registry` comes from a user-controlled image reference. Block
+	// loopback/metadata/reserved but allow LAN registries (self-hosted Harbor).
+	if (!isSafeRegistryHost(registry).ok) return [];
+
 	const base = `https://${registry}`;
 	const authHeader = await getRegistryAuthHeader(base, `repository:${repo}:pull`, credentials ?? undefined);
 	const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': 'Dockhand/1.0' };
@@ -35,7 +40,8 @@ export async function fetchGenericV2Tags(
 	let path: string | null = `/v2/${repo}/tags/list?n=${PAGE_SIZE}`;
 
 	for (let page = 0; page < MAX_PAGES && path; page++) {
-		const response = await fetch(`${base}${path}`, { headers });
+		const response = await fetch(`${base}${path}`, { headers, redirect: 'manual' });
+		if (response.status >= 300 && response.status < 400) break; // don't follow a redirect off the guarded host
 		if (!response.ok) break; // 4xx/5xx: stop with whatever we have.
 
 		const data = (await response.json()) as TagsListResponse;

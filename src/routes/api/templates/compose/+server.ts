@@ -1,6 +1,7 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { json } from '@sveltejs/kit';
 import { authorize } from '$lib/server/authorize';
+import { isSafeWebhookUrl } from '$lib/server/url-safety';
 import type { TemplateItem } from '../+server';
 
 function generateContainerCompose(template: TemplateItem): string {
@@ -72,7 +73,21 @@ async function fetchStackCompose(repository: { url: string; stackfile: string })
 			: `${repository.url}/${repository.stackfile}`;
 	}
 
-	const response = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
+	// The fallback URL is user-controlled, so guard against SSRF: the server must
+	// not be coerced into fetching loopback/private/link-local/metadata hosts and
+	// returning the body. A compose template always lives on a public host, so the
+	// strict webhook policy (block all private ranges) fits.
+	const safety = isSafeWebhookUrl(rawUrl);
+	if (!safety.ok) {
+		throw new Error(`Refusing to fetch compose file: ${safety.reason}`);
+	}
+
+	// redirect:'manual' - a public URL that 3xx-redirects to a private/metadata
+	// host would bypass the literal-host check above, so refuse to follow it.
+	const response = await fetch(rawUrl, { redirect: 'manual', signal: AbortSignal.timeout(10000) });
+	if (response.status >= 300 && response.status < 400) {
+		throw new Error('Refusing to fetch compose file: server tried to redirect the request');
+	}
 	if (!response.ok) {
 		throw new Error(`Failed to fetch compose file: ${response.status}`);
 	}

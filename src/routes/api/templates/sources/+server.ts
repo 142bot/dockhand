@@ -1,6 +1,7 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { json } from '@sveltejs/kit';
 import { authorize } from '$lib/server/authorize';
+import { isSafeWebhookUrl } from '$lib/server/url-safety';
 import { getTemplateSources, updateTemplateSource, addTemplateSource, deleteTemplateSource } from '$lib/server/templates';
 
 /**
@@ -47,7 +48,11 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 	const updates: any = {};
 	if (enabled !== undefined) updates.enabled = enabled;
 	if (name !== undefined) updates.name = name;
-	if (url !== undefined) updates.url = url;
+	if (url !== undefined) {
+		const safety = isSafeWebhookUrl(url);
+		if (!safety.ok) return json({ error: `Invalid source URL: ${safety.reason}` }, { status: 400 });
+		updates.url = url;
+	}
 
 	await updateTemplateSource(id, updates);
 	return json({ ok: true });
@@ -76,6 +81,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	if (!name?.trim() || !url?.trim()) {
 		return json({ error: 'Name and URL are required' }, { status: 400 });
 	}
+	const safety = isSafeWebhookUrl(url.trim());
+	if (!safety.ok) return json({ error: `Invalid source URL: ${safety.reason}` }, { status: 400 });
 
 	const source = await addTemplateSource({ name: name.trim(), url: url.trim() });
 	return json(source);

@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { unixSocketRequest, httpsAgentRequest } from '$lib/server/docker';
 import type { DockerClientConfig } from '$lib/server/docker';
+import { isSafeNotificationUrl } from '$lib/server/url-safety';
 import type { RequestHandler } from './$types';
 
 interface TestConnectionRequest {
@@ -77,6 +78,15 @@ export const POST: RequestHandler = async ({ request }) => {
 
 			if (!host) {
 				return json({ success: false, error: 'Host is required' }, { status: 400 });
+			}
+
+			// SSRF guard: host/port come straight from the request body. A remote
+			// Docker/Hawser daemon legitimately lives on a LAN, so allow private
+			// ranges but block loopback + cloud metadata (169.254.169.254) + reserved
+			// so this tester can't be used to probe the control plane or metadata IMDS.
+			const hostSafety = isSafeNotificationUrl(`${protocol}://${host}:${port}`);
+			if (!hostSafety.ok) {
+				return json({ success: false, error: `Host not allowed: ${hostSafety.reason}` }, { status: 200 });
 			}
 
 			const headers: Record<string, string> = {

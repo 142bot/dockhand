@@ -95,7 +95,9 @@ export function ipCategory(host: string): IpCategory | null {
 	// IPv6 loopback / unspecified, then link-local / unique-local (private).
 	if (h === '::1') return 'loopback';
 	if (h === '::' || h === '::0') return 'reserved'; // unspecified / all-interfaces
-	if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return 'private';
+	// Require a colon so real IPv6 unique-local/link-local literals match but public
+	// DNS names starting "fc"/"fd" (fcm.googleapis.com, fdroid.link) do not.
+	if (h.startsWith('fe80:') || /^f[cd][0-9a-f]{0,2}:/.test(h)) return 'private';
 	// IPv4-mapped/compatible IPv6 — judge the embedded v4 (see embeddedV4).
 	const v4 = embeddedV4(h) ?? h;
 	const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
