@@ -379,18 +379,18 @@ export async function updateSecretProvider(
 	if (data.config !== undefined) {
 		// The edit form pre-fills non-secret fields but leaves the token blank to mean
 		// "keep the stored secret". Merge the incoming config OVER the existing one so a
-		// blank/absent secret keeps its stored value instead of being wiped. Only applies
-		// when the provider type is unchanged (a type change is a full re-config).
+		// blank/absent secret keeps its stored value instead of being wiped. The edit
+		// form always sends `type` (its dropdown is read-only), so gate on the type not
+		// CHANGING rather than on it being absent - a genuine type change is a full
+		// re-config and skips the merge. (#1432)
 		let merged: Record<string, unknown> = { ...(data.config as Record<string, unknown>) };
-		const typeUnchanged = data.type === undefined;
-		if (typeUnchanged) {
-			const existing = await getSecretProviderById(id);
-			if (existing) {
-				merged = mergeProviderConfigForWrite(
-					data.config as Record<string, unknown>,
-					existing.config as Record<string, unknown>
-				);
-			}
+		const existing = await getSecretProviderById(id);
+		const typeUnchanged = data.type === undefined || (existing !== undefined && data.type === existing.type);
+		if (typeUnchanged && existing) {
+			merged = mergeProviderConfigForWrite(
+				data.config as Record<string, unknown>,
+				existing.config as Record<string, unknown>
+			);
 		}
 		const encrypted = encrypt(JSON.stringify(merged));
 		if (encrypted) updateData.config = encrypted;
