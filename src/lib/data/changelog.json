@@ -1,12 +1,11 @@
 [
   {
     "version": "1.0.43",
-    "date": "",
-    "comingSoon": true,
+    "date": "2026-08-20",
     "changes": [
       {
         "type": "fix",
-        "text": "registry auth no longer fails when the token realm redirects http to https behind a TLS-terminating proxy (#1428)"
+        "text": "registry auth survives an http to https token realm redirect behind a TLS proxy (#1428)"
       },
       {
         "type": "fix",
@@ -67,6 +66,10 @@
       {
         "type": "fix",
         "text": "API: validating a stack's env vars no longer drops the environment id (#1423)"
+      },
+      {
+        "type": "fix",
+        "text": "editing a secret provider no longer wipes its stored token (#1432)"
       }
     ],
     "imageTag": "fnsys/dockhand:v1.0.43"
