@@ -1574,6 +1574,14 @@
 			// Reset mode to prop values on each open
 			mode = propMode;
 			stackName = propStackName;
+			// Clear any compose-validate panel state from a previous open (the modal is
+			// persistently mounted, so $state survives close/reopen - even across envs).
+			validatePanelOpen = false;
+			validateReport = null;
+			validateError = null;
+			validateLoading = false;
+			validateActiveLine = null;
+			validateSeq++;
 			if (mode === 'edit' && stackName) {
 				loadComposeFile().then(() => {
 					// Auto-validate after loading
