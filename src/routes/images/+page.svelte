@@ -25,6 +25,7 @@
 	import { formatBytes } from '$lib/utils/format';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { copyToClipboard } from '$lib/utils/clipboard';
+	import { buildPinnedRef, shortDigest } from '$lib/utils/pinned-ref';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import BatchOperationModal from '$lib/components/BatchOperationModal.svelte';
 	import ImageHistoryModal from './ImageHistoryModal.svelte';
@@ -63,6 +64,10 @@
 			tag: string;
 			fullRef: string;
 			imageId: string;
+			/** `repo:tag@sha256:...` for the "copy pinned reference" action, or null if the image has no digest. */
+			pinnedRef: string | null;
+			/** Shortened `sha256:...` shown next to the tag, or null. */
+			digestShort: string | null;
 			size: number;
 			created: number;
 			containers: number;
@@ -354,6 +359,16 @@
 		}
 	}
 
+	// Copy digest-pinned reference (repo:tag@sha256:...).
+	let copiedPinned = $state<string | null>(null);
+	async function copyPinnedRef(pinnedRef: string) {
+		const ok = await copyToClipboard(pinnedRef);
+		if (ok) {
+			copiedPinned = pinnedRef;
+			pendingTimeouts.push(setTimeout(() => copiedPinned = null, 2000));
+		}
+	}
+
 	// Export state
 	let exportingId = $state<string | null>(null);
 
@@ -414,6 +429,8 @@
 					tag: repoName === '<none>' ? image.id.slice(7, 19) : '<none>',
 					fullRef: image.id,
 					imageId: image.id,
+					pinnedRef: buildPinnedRef(repoName, image.repoDigests),
+					digestShort: shortDigest(repoName, image.repoDigests),
 					size: image.size,
 					created: image.created,
 					containers: image.containers
@@ -446,6 +463,8 @@
 							tag: tagPart,
 							fullRef: fullTag,
 							imageId: image.id,
+							pinnedRef: buildPinnedRef(fullTag, image.repoDigests),
+							digestShort: shortDigest(fullTag, image.repoDigests),
 							size: image.size,
 							created: image.created,
 							containers: image.containers
@@ -1388,6 +1407,22 @@
 								<div class="flex items-center gap-1.5">
 									<Tag class="w-3 h-3 text-muted-foreground shrink-0" />
 									<span class="{tagInfo.tag === 'latest' ? 'text-blue-600 dark:text-blue-400' : ''}">{tagInfo.tag}</span>
+									{#if tagInfo.digestShort && tagInfo.pinnedRef}
+										<button
+											type="button"
+											onclick={() => copyPinnedRef(tagInfo.pinnedRef!)}
+											class="inline-flex items-center gap-1 hover:bg-muted px-1 py-0.5 rounded transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+											title={copiedPinned === tagInfo.pinnedRef ? 'Copied!' : 'Copy digest-pinned reference (tag@sha256)'}
+										>
+											<ShieldCheck class="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+											<code class="text-2xs">{tagInfo.digestShort}</code>
+											{#if copiedPinned === tagInfo.pinnedRef}
+												<Check class="w-3 h-3 text-green-500" />
+											{:else}
+												<Copy class="w-3 h-3" />
+											{/if}
+										</button>
+									{/if}
 								</div>
 							{:else if column.id === 'id'}
 								<button

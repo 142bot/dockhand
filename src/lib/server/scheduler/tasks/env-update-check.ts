@@ -32,6 +32,7 @@ import {
 	removeTempImage,
 	tagImage,
 	inspectImage,
+	getTagArtifactKind,
 } from '../../docker';
 import type { ImageEnvLabels } from '../../container-env-merge';
 import { sendEventNotification } from '../../notifications';
@@ -227,7 +228,7 @@ export async function runEnvUpdateCheckJob(
 					// A `dockhand.version.pattern` label lets a container teach the check
 					// how to read its own non-standard tags (CalVer+hash, etc.).
 					const versionPattern = getVersionPatternOverride(inspectData.Config?.Labels);
-					const newer = await checkNewerVersion(imageName, { ...semverOptions, versionPattern }).catch(() => null);
+					const newer = await checkNewerVersion(imageName, { ...semverOptions, versionPattern }, getTagArtifactKind).catch(() => null);
 					if (newer) {
 						semverByContainer.set(container.id, newer);
 						await log(`    NEWER VERSION: ${newer.tag} (${newer.bump})`);

@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { authorize } from '$lib/server/authorize';
-import { listContainers, inspectContainer, checkImageUpdateAvailable } from '$lib/server/docker';
+import { listContainers, inspectContainer, checkImageUpdateAvailable, getTagArtifactKind } from '$lib/server/docker';
 import { clearPendingContainerUpdates, addPendingContainerUpdate, getPendingContainerUpdates, getGlobalSemverConfig } from '$lib/server/db';
 import { isSystemContainer, isPodmanInfraContainer } from '$lib/server/scheduler/tasks/update-utils';
 import { isUpdateDisabledByLabel, isHiddenByLabel, getVersionPatternOverride } from '$lib/server/container-labels';
@@ -156,7 +156,7 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 					? await checkNewerVersion(imageName, {
 							...semverOptions,
 							versionPattern: getVersionPatternOverride(inspectData.Config?.Labels)
-						}).catch(() => null)
+						}, getTagArtifactKind).catch(() => null)
 					: null;
 
 				return {

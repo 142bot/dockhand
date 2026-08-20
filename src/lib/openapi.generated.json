@@ -8651,6 +8651,9 @@
                     "source": {
                       "type": "string"
                     },
+                    "rateLimited": {
+                      "type": "boolean"
+                    },
                     "notes": {
                       "type": "array",
                       "items": {

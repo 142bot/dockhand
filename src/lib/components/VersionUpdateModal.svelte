@@ -1,7 +1,7 @@
 <script lang="ts">
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
-	import { Box, ArrowRight, ExternalLink, Copy, Check, RefreshCw, ChevronDown, BookOpen } from 'lucide-svelte';
+	import { Box, ArrowRight, ExternalLink, Copy, Check, RefreshCw, ChevronDown, BookOpen, ShieldCheck, Info } from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
 	import { appendEnvParam } from '$lib/stores/environment';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -57,6 +57,7 @@
 	let source = $state<string | null>(null);
 	let loadedFor = $state<string | null>(null);
 	let copied = $state(false);
+	let rateLimited = $state(false);
 
 	// Fetch notes when the modal opens for a (container, target) pair we haven't loaded.
 	$effect(() => {
@@ -72,6 +73,7 @@
 		notes = [];
 		changelogUrl = null;
 		source = null;
+		rateLimited = false;
 		try {
 			const qs = `versions=${encodeURIComponent(versions.join(','))}`;
 			const res = await fetch(
@@ -82,6 +84,7 @@
 				notes = data.notes ?? [];
 				changelogUrl = data.changelogUrl ?? null;
 				source = data.source ?? null;
+				rateLimited = data.rateLimited ?? false;
 			}
 		} catch {
 			// leave notes empty -> the "no notes" fallback renders
@@ -90,15 +93,31 @@
 		}
 	}
 
+	// Repo without the tag, e.g. `ghcr.io/owner/app` from `ghcr.io/owner/app:1.2`.
+	const repoBase = $derived.by(() => {
+		const img = container?.image ?? '';
+		return img.slice(0, img.lastIndexOf(':') > img.lastIndexOf('/') ? img.lastIndexOf(':') : img.length);
+	});
+
 	async function copyTag() {
 		if (!container || !newerVersion) return;
-		const img = container.image;
-		const base = img.slice(0, img.lastIndexOf(':') > img.lastIndexOf('/') ? img.lastIndexOf(':') : img.length);
-		const ok = await copyToClipboard(`${base}:${newerVersion.tag}`);
+		const ok = await copyToClipboard(`${repoBase}:${newerVersion.tag}`);
 		if (ok) {
 			copied = true;
 			toast.success('New image tag copied');
 			setTimeout(() => (copied = false), 1500);
+		}
+	}
+
+	// Digest-pinned form of the new tag (repo:tag@sha256).
+	let copiedPinned = $state(false);
+	async function copyPinnedTag() {
+		if (!container || !newerVersion?.digest) return;
+		const ok = await copyToClipboard(`${repoBase}:${newerVersion.tag}@${newerVersion.digest}`);
+		if (ok) {
+			copiedPinned = true;
+			toast.success('New tag with digest copied');
+			setTimeout(() => (copiedPinned = false), 1500);
 		}
 	}
 
@@ -109,6 +128,20 @@
 	// Note for a given version path entry, if GitHub had one.
 	function noteFor(version: string): ReleaseNote | undefined {
 		return notes.find((n) => n.version === version);
+	}
+
+	// A DOM-safe id for a version's release-note <details>, so the Path links can
+	// open + scroll to it. Non-alphanumerics -> '-' (tags like `16.4-alpine` are fine).
+	function noteId(version: string): string {
+		return `note-${version.replace(/[^a-zA-Z0-9]+/g, '-')}`;
+	}
+
+	// Clicking a version in the Path opens its note and scrolls it into view.
+	function jumpToNote(version: string) {
+		const el = document.getElementById(noteId(version));
+		if (!el) return;
+		if (el instanceof HTMLDetailsElement) el.open = true;
+		el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
 </script>
 
@@ -123,6 +156,18 @@
 						<span class="text-muted-foreground font-normal">{currentTag}</span>
 						<ArrowRight class="w-4 h-4 text-muted-foreground shrink-0" />
 						<span class="font-semibold text-amber-400">{newerVersion.tag}</span>
+						<button
+							type="button"
+							onclick={copyTag}
+							title={copied ? 'Copied!' : 'Copy new tag'}
+							class="inline-flex items-center p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						>
+							{#if copied}
+								<Check class="w-3.5 h-3.5 text-green-500" />
+							{:else}
+								<Copy class="w-3.5 h-3.5" />
+							{/if}
+						</button>
 					</span>
 					<span class="ml-auto flex items-center gap-2">
 						<span class="rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase {bumpColor}">
@@ -133,19 +178,44 @@
 						{/if}
 					</span>
 				</Dialog.Title>
-				<Dialog.Description>
-					Advisory only. Dockhand never changes the tag in your compose - bump it yourself.
-				</Dialog.Description>
 			</Dialog.Header>
 
-			<!-- Version path -->
+			<!-- Digest-pinned reference for the new tag (repo:tag@sha256), inline copy. -->
+			{#if newerVersion.digest}
+				<button
+					type="button"
+					onclick={copyPinnedTag}
+					title={copiedPinned ? 'Copied!' : 'Copy the new tag pinned to its digest (tag@sha256)'}
+					class="group flex items-center gap-1.5 w-full text-left px-2 py-1.5 rounded-md border border-border bg-muted/30 hover:bg-muted/60 transition-colors cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				>
+					<ShieldCheck class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+					<code class="text-xs text-muted-foreground truncate min-w-0 flex-1">{repoBase}:{newerVersion.tag}@{newerVersion.digest}</code>
+					{#if copiedPinned}
+						<Check class="w-3.5 h-3.5 text-green-500 shrink-0" />
+					{:else}
+						<Copy class="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground shrink-0" />
+					{/if}
+				</button>
+			{/if}
+
+			<!-- Version path. A version with release notes is a link that opens + scrolls to them. -->
 			{#if versionPath.length > 1}
 				<div class="flex items-center gap-1.5 flex-wrap text-xs px-1">
 					<span class="text-muted-foreground">Path:</span>
 					<span class="font-mono text-muted-foreground">{currentTag}</span>
 					{#each versionPath as v, i}
+						{@const isTarget = i === versionPath.length - 1}
 						<ArrowRight class="w-3 h-3 text-muted-foreground/60 shrink-0" />
-						<span class="font-mono {i === versionPath.length - 1 ? 'text-amber-400 font-semibold' : 'text-foreground'}">{v}</span>
+						{#if noteFor(v)}
+							<button
+								type="button"
+								onclick={() => jumpToNote(v)}
+								title="Jump to release notes for {v}"
+								class="font-mono cursor-pointer transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded {isTarget ? 'text-amber-400 font-semibold' : 'text-foreground hover:text-amber-400'}"
+							>{v}</button>
+						{:else}
+							<span class="font-mono {isTarget ? 'text-amber-400 font-semibold' : 'text-foreground'}">{v}</span>
+						{/if}
 					{/each}
 				</div>
 			{/if}
@@ -161,7 +231,7 @@
 					{#each versionPath.slice().reverse() as version}
 						{@const note = noteFor(version)}
 						{#if note}
-							<details class="group rounded-md border border-border bg-muted/30 [&_summary::-webkit-details-marker]:hidden" open={version === newerVersion.tag || versionPath.length <= 3}>
+							<details id={noteId(version)} class="group rounded-md border border-border bg-muted/30 [&_summary::-webkit-details-marker]:hidden" open={version === newerVersion.tag || versionPath.length <= 3}>
 								<summary class="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors rounded-md list-none">
 									<ChevronDown class="w-4 h-4 text-muted-foreground shrink-0 transition-transform group-open:rotate-0 -rotate-90" />
 									<span class="font-mono text-sm font-semibold">{note.name || note.githubTag}</span>
@@ -187,22 +257,40 @@
 					{/each}
 				{:else}
 					<!-- Fallback: no per-version notes found -->
-					<div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
-						<BookOpen class="w-8 h-8 text-muted-foreground/50" />
-						<p class="text-sm text-muted-foreground max-w-sm">
+					{#if rateLimited}
+						<div class="flex flex-col items-start gap-3 py-8">
+							<div class="flex items-start gap-2.5">
+								<Info class="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
+								<p class="text-sm text-muted-foreground">
+									GitHub's rate limit was hit while fetching release notes. Set a
+									<code class="text-xs">DOCKHAND_GITHUB_TOKEN</code> (a personal access token, no scopes needed)
+									to raise the limit from 60 to 5000 requests/hour.
+								</p>
+							</div>
 							{#if changelogUrl}
-								Release notes for these versions aren't available inline.
-							{:else}
-								This image doesn't publish release notes Dockhand can read
-								(no <code class="text-xs">org.opencontainers.image.source</code> label pointing at a GitHub or Gitea/Forgejo repo).
+								<Button variant="outline" size="sm" href={changelogUrl} target="_blank" rel="noopener noreferrer">
+									<ExternalLink class="w-3.5 h-3.5 mr-1.5" /> View changelog
+								</Button>
 							{/if}
-						</p>
-						{#if changelogUrl}
-							<Button variant="outline" size="sm" href={changelogUrl} target="_blank" rel="noopener noreferrer">
-								<ExternalLink class="w-3.5 h-3.5 mr-1.5" /> View changelog
-							</Button>
-						{/if}
-					</div>
+						</div>
+					{:else}
+						<div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
+							<BookOpen class="w-8 h-8 text-muted-foreground/50" />
+							<p class="text-sm text-muted-foreground max-w-sm">
+								{#if changelogUrl}
+									Release notes for these versions aren't available inline.
+								{:else}
+									This image doesn't publish release notes Dockhand can read
+									(no <code class="text-xs">org.opencontainers.image.source</code> label pointing at a GitHub or Gitea/Forgejo repo).
+								{/if}
+							</p>
+							{#if changelogUrl}
+								<Button variant="outline" size="sm" href={changelogUrl} target="_blank" rel="noopener noreferrer">
+									<ExternalLink class="w-3.5 h-3.5 mr-1.5" /> View changelog
+								</Button>
+							{/if}
+						</div>
+					{/if}
 				{/if}
 			</div>
 
@@ -213,14 +301,7 @@
 					{/if}
 				</div>
 				<div class="flex gap-2">
-					<Button variant="outline" size="sm" onclick={copyTag}>
-						{#if copied}
-							<Check class="w-3.5 h-3.5 mr-1.5 text-green-500" /> Copied
-						{:else}
-							<Copy class="w-3.5 h-3.5 mr-1.5" /> Copy new tag
-						{/if}
-					</Button>
-					<Button variant="ghost" size="sm" onclick={close}>Close</Button>
+					<Button variant="outline" size="sm" onclick={close}>Close</Button>
 				</div>
 			</Dialog.Footer>
 		{/if}

@@ -10,6 +10,8 @@ export interface NewerVersion {
 	tag: string;
 	bump: 'major' | 'minor' | 'patch';
 	skipped: string[];
+	/** The target tag's manifest digest (`sha256:...`), when known. Lets the UI copy the new tag digest-pinned. */
+	digest?: string;
 }
 
 export interface ContainerInfo {
