@@ -6,3 +6,4 @@ bun.lock
 data/db
 data/.encryption_key
 .last-synced-gitea
+.hermes/

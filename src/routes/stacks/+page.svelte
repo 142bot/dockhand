@@ -51,6 +51,7 @@
 	import { ErrorDialog } from '$lib/components/ui/error-dialog';
 	import { formatHostPortUrl } from '$lib/utils/url';
 	import { formatBytes, formatBytesCompact } from '$lib/utils/format';
+	import { effectiveStackBranch } from '$lib/git-stack-branch';
 
 	type SortField = 'name' | 'containers' | 'status' | 'cpu' | 'memory';
 	type SortDirection = 'asc' | 'desc';
@@ -938,7 +939,7 @@
 		return stack.status;
 	}
 
-	async function openGitModal(gitStack?: any) {
+	async function openGitModal(gitStack: any = undefined) {
 		editingGitStack = gitStack || null;
 		// Fetch repositories and credentials before opening modal
 		try {
@@ -1115,10 +1116,13 @@
 		editingStackName = name;
 		stackModalReadonly = true;
 		const src = getStackSource(name);
+		// Effective branch: per-stack override wins, else repository default
+		// (shared with the server-side resolver in src/lib/git-stack-branch.ts).
+		const eff = effectiveStackBranch(src?.gitStack ?? null, src?.repository ?? undefined);
 		stackModalGitInfo = {
 			commit: src?.gitStack?.lastCommit || undefined,
 			url: src?.repository?.url || undefined,
-			branch: src?.repository?.branch || undefined
+			branch: eff.branch
 		};
 		showEditModal = true;
 	}
