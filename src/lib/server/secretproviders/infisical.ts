@@ -68,7 +68,9 @@ function multiScopeHint(statusCode: number, config: InfisicalConfig): string {
 /**
  * Builds the /api/v3/secrets/raw URL. The secret path defaults to `/` (Infisical's
  * root). workspaceId/environment are omitted when empty so a service token can infer
- * them from its own scope.
+ * them from its own scope. `expandSecretReferences=true` makes Infisical resolve
+ * native secret references (a value like `${OTHER}`) to their final value server-side;
+ * this endpoint leaves them raw by default, which would inject the literal reference.
  */
 function rawSecretsUrl(
 	host: string,
@@ -76,7 +78,10 @@ function rawSecretsUrl(
 	environment: string | undefined,
 	secretPath: string
 ): string {
-	const params = new URLSearchParams({ secretPath: secretPath || '/' });
+	const params = new URLSearchParams({
+		secretPath: secretPath || '/',
+		expandSecretReferences: 'true'
+	});
 	if (workspaceId) params.set('workspaceId', workspaceId);
 	if (environment) params.set('environment', environment);
 	return `${baseUrl(host)}/api/v3/secrets/raw?${params.toString()}`;
