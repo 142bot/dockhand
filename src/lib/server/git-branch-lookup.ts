@@ -2,7 +2,7 @@
  * Security guards for user-supplied git repository URLs on the branch-lookup
  * and env-preview flows (POST /api/git/branches, POST /api/git/preview-env).
  *
- * Three guards protect these endpoints:
+ * Two guards protect these endpoints:
  *
  *  1. SSRF — the URL is handed to a git subprocess whose libcurl resolves
  *     EVERY legal IP encoding (decimal 2130706433, octal 0177.0.0.1, short
@@ -14,16 +14,7 @@
  *     scheme so that ssh:// and scp-like URLs (which are valid git remotes
  *     but not valid URL() inputs) can be canonicalized.
  *
- *  2. Credential affinity — a raw url + stored credentialId is ONLY allowed
- *     when the credential's username is plausibly FOR that host (username ==
- *     host, or a single-label credential username equal to the host). No
- *     name-segment inference, no first-label matching: a single-label
- *     credential username ("github", "admin", "git") plus an attacker
- *     subdomain (github.evil.com) would otherwise deliver the decrypted
- *     secret to the attacker. The repositoryId path is not subject to this
- *     guard — the pairing is the user's own stored repository config.
- *
- *  3. Transport denylist — assertSafeRepoUrl (git-url-safety.ts) rejects the
+ *  2. Transport denylist — assertSafeRepoUrl (git-url-safety.ts) rejects the
  *     ext::/fd::/file:: transports and local paths. listRemoteBranches calls
  *     it explicitly so the denylist holds on every path into a git
  *     subprocess, not only via buildRepoUrl.
