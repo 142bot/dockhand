@@ -5049,6 +5049,11 @@ export async function runContainerWithStreaming(options: {
 		containerConfig.HostConfig.Dns = options.dns;
 	}
 
+	// A remote daemon may not have the helper image (e.g. alpine:latest on a fresh
+	// direct-remote host), and /containers/create does NOT auto-pull - it 404s with
+	// "No such image". Pull it first so the stager/helper works out of the box (#1442).
+	await ensureImagePresent(options.image, options.envId);
+
 	const createResult = await dockerJsonRequest<{ Id: string }>(
 		`/containers/create?name=${encodeURIComponent(containerName)}`,
 		{ method: 'POST', body: JSON.stringify(containerConfig) },
