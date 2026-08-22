@@ -86,10 +86,10 @@ async function postGitBranches(
 	if (!result) return { status: 500, json: { error: 'git ls-remote failed' } };
 	if (result.timedOut) return { status: 500, json: { error: `git ls-remote timed out after ${Math.round(GIT_TIMEOUT_MS / 1000)}s` } };
 	if (result.code !== 0) return { status: 500, json: { error: result.stderr } };
-	const BRANCH_RE = new RegExp('refs/heads/(.+)$');
-	const branches = result.stdout.split('\n').filter((l) => l.trim()).map((l) => {
+	const BRANCH_RE = new RegExp('^([0-9a-f]+)\\s+refs/heads/(.+)$');
+	const branches = result.stdout.split('\n').map((l) => {
 		const m = l.match(BRANCH_RE);
-		return m ? m[1] : null;
+		return m ? { name: m[2], sha: m[1].slice(0, 7) } : null;
 	}).filter(Boolean);
 	return { status: 200, json: { branches } };
 }
@@ -313,7 +313,11 @@ describe('POST /api/git/branches — pipeline', () => {
 		});
 		const res = await postGitBranches({ repositoryId: repo.id });
 		expect(res.status).toBe(200);
-		expect(res.json.branches).toEqual(['main', 'develop', 'feature/test']);
+		expect(res.json.branches).toEqual([
+			{ name: 'main', sha: 'a1b2c3d' },
+			{ name: 'develop', sha: 'd4e5f6a' },
+			{ name: 'feature/test', sha: 'c3d4e5f' }
+		]);
 	});
 
 	test('raw-url path returns branches', async () => {
@@ -324,7 +328,10 @@ describe('POST /api/git/branches — pipeline', () => {
 		});
 		const res = await postGitBranches({ url: 'https://github.com/test/repo.git' });
 		expect(res.status).toBe(200);
-		expect(res.json.branches).toEqual(['main', 'develop']);
+		expect(res.json.branches).toEqual([
+			{ name: 'main', sha: 'a1b2c3d' },
+			{ name: 'develop', sha: 'd4e5f6a' }
+		]);
 	});
 
 	test('unknown repositoryId returns 404', async () => {

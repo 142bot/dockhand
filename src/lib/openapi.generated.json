@@ -12217,9 +12217,14 @@
                 },
                 "example": {
                   "branches": [
-                    "main",
-                    "develop",
-                    "feature/test"
+                    {
+                      "name": "main",
+                      "sha": "a1b2c3d"
+                    },
+                    {
+                      "name": "develop",
+                      "sha": "e4f5a6b"
+                    }
                   ]
                 }
               }
@@ -12246,7 +12251,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ls-remote is bounded by a hard timeout.",
+        "description": "Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). Each branch carries its short commit SHA. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ls-remote is bounded by a hard timeout.",
         "requestBody": {
           "required": true,
           "content": {

@@ -152,7 +152,7 @@
 
 	// Branch selection
 	let formBranch = $state<string | null>(null);
-	let branches = $state<string[]>([]);
+	let branches = $state<{ name: string; sha: string }[]>([]);
 	let branchesLoading = $state(false);
 	// Monotonic token that guards against a stale branch-enumeration response
 	// overwriting `branches` for a newer repository URL (the $effect below can
@@ -888,6 +888,7 @@
 									id="existing-repo-branch"
 									value={formBranch ?? ''}
 									branches={branches}
+									defaultBranch={selectedRepo.branch}
 									loading={branchesLoading}
 									placeholder="Repository default ({selectedRepo.branch})"
 									clearLabel="Repository default ({selectedRepo.branch})"
@@ -925,24 +926,25 @@
 									<p class="text-xs text-destructive">{errors.repoUrl}</p>
 								{/if}
 							</div>
-							<div class="grid grid-cols-2 gap-3">
+							<div class="grid grid-cols-2 items-start gap-3">
 								<div class="space-y-2">
 									<Label for="new-repo-branch">Branch</Label>
 									<!-- Free-text, searchable branch picker. Supports both discovered
-									     branches and arbitrary typed names (maintainer review: a new/
-									     private repository whose branch enumeration fails must not force the
-									     user onto "main" — they can type the known branch name instead). The
-									     "main" default is preserved when no branch has been chosen, and a
-									     value not returned by enumeration is never silently reset. Server-side
-									     Git ref validation remains authoritative. -->
+									     branches and arbitrary typed names: a new/private repository whose
+									     branch enumeration fails must not force the user onto "main" — they
+									     can type the known branch name instead. The "main" default is
+									     preserved when no branch has been chosen, and a value not returned by
+									     enumeration is never silently reset. Server-side Git ref validation
+									     remains authoritative. -->
 									<BranchCombobox
 										id="new-repo-branch"
+										class="w-full"
 										value={formNewRepoBranch}
 										branches={branches}
 										loading={branchesLoading}
 										placeholder="main"
 									/>
-									<p class="text-xs text-muted-foreground">Branch to deploy. Type a name (e.g. "main") or pick from the list.</p>
+									<p class="text-xs text-muted-foreground">Type a name or pick from the list.</p>
 								</div>
 								<div class="space-y-2">
 									<Label for="new-repo-credential">Credential</Label>
@@ -990,6 +992,7 @@
 											{/each}
 										</Select.Content>
 									</Select.Root>
+									<p class="text-xs text-muted-foreground">SSH key or token for private repositories.</p>
 								</div>
 							</div>
 						</div>
@@ -1031,6 +1034,7 @@
 						id="stack-branch"
 						value={formBranch ?? ''}
 						branches={branches}
+						defaultBranch={selectedRepo.branch}
 						loading={branchesLoading}
 						placeholder="Repository default ({selectedRepo.branch})"
 						clearLabel="Repository default ({selectedRepo.branch})"

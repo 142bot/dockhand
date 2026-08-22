@@ -743,11 +743,17 @@ export async function testRepositoryConfig(options: {
  * explicitly, rather than only via buildRepoUrl — a future parser change in
  * buildRepoUrl must not be able to reopen command execution on this path.
  */
+export interface RemoteBranch {
+	name: string;
+	/** Short (7-char) commit SHA the branch points at, from ls-remote. */
+	sha: string;
+}
+
 export async function listRemoteBranches(options: {
 	url: string;
 	credentialId?: number | null;
 	timeoutMs?: number;
-}): Promise<{ branches: string[]; error?: string }> {
+}): Promise<{ branches: RemoteBranch[]; error?: string }> {
 	const { url, credentialId, timeoutMs } = options;
 
 	// The effective branch-lookup timeout: an explicitly provided (valid)
@@ -782,13 +788,14 @@ export async function listRemoteBranches(options: {
 			return { branches: [], error: cleanGitError(result.stderr) };
 		}
 
+		// Each line: "<sha>\trefs/heads/<name>". Keep the SHA (short) so the
+		// picker can show it; it was previously discarded.
 		const branches = result.stdout.split('\n')
-			.filter(l => l.trim())
 			.map(l => {
-				const m = l.match(/refs\/heads\/(.+)$/);
-				return m ? m[1] : null;
+				const m = l.match(/^([0-9a-f]+)\s+refs\/heads\/(.+)$/);
+				return m ? { name: m[2], sha: m[1].slice(0, 7) } : null;
 			})
-			.filter(Boolean) as string[];
+			.filter(Boolean) as RemoteBranch[];
 
 		return { branches };
 	} catch (error: any) {

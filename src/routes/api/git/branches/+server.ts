@@ -25,16 +25,16 @@ import { assertSafeRepoTarget } from '$lib/server/git-branch-lookup';
  *   credentialId?: number|null // Credential for the url (new-repo flow)
  * }
  *
- * Returns: { branches: string[] }
+ * Returns: { branches: { name: string, sha: string }[] }
  */
 /**
  * @openapi
  * summary: List remote branches for a git repository via `git ls-remote`
- * description: Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ls-remote is bounded by a hard timeout.
+ * description: Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). Each branch carries its short commit SHA. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ls-remote is bounded by a hard timeout.
  * body: {repositoryId:integer, url:string, credentialId:integer}
  * body-example: {"url":"https://github.com/example/repo.git","credentialId":2}
- * resp-200: {branches:array<string>!}
- * resp-200-example: {"branches":["main","develop","feature/test"]}
+ * resp-200: {branches:array<object>!}
+ * resp-200-example: {"branches":[{"name":"main","sha":"a1b2c3d"},{"name":"develop","sha":"e4f5a6b"}]}
  * resp-400: The URL points at a loopback/link-local/metadata/reserved target, or neither repositoryId nor url was supplied
  * resp-403: Permission denied (requires git:edit)
  * resp-404: The referenced repository does not exist

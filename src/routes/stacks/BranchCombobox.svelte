@@ -27,11 +27,18 @@
 	 *  - keyboard selection (ArrowUp/Down + Enter) works for both fetched rows
 	 *    and the free-text row.
 	 */
+	interface Branch {
+		name: string;
+		sha: string;
+	}
+
 	interface Props {
 		/** Current branch value (e.g. "main"). */
 		value: string;
-		/** Discovered branch names (from /api/git/branches). */
-		branches: string[];
+		/** Discovered branches (from /api/git/branches), name + short SHA. */
+		branches: Branch[];
+		/** Repository default branch name, highlighted in the list when known. */
+		defaultBranch?: string;
 		/** True while branch enumeration is in flight. */
 		loading: boolean;
 		/** Called with the selected value (a fetched branch or the typed name). */
@@ -49,6 +56,7 @@
 	let {
 		value = $bindable('main'),
 		branches = [],
+		defaultBranch,
 		loading = false,
 		onchange,
 		onclear,
@@ -79,14 +87,16 @@
 	// fetched list) still surfaces near the top for easy re-selection.
 	const filteredBranches = $derived(
 		searchQuery
-			? branches.filter((b) => b.toLowerCase().includes(searchQuery.toLowerCase()))
+			? branches.filter((b) => b.name.toLowerCase().includes(searchQuery.toLowerCase()))
 			: branches
 	);
 
 	// Offer the typed name as a selectable row when it is non-blank and is not
 	// already one of the fetched branches.
 	const freeTextBranch = $derived(
-		searchQuery.trim() && !branches.includes(searchQuery.trim()) ? searchQuery.trim() : ''
+		searchQuery.trim() && !branches.some((b) => b.name === searchQuery.trim())
+			? searchQuery.trim()
+			: ''
 	);
 
 	// Display: show the current value; fall back to the placeholder when empty
@@ -95,7 +105,7 @@
 </script>
 
 <Popover.Root bind:open>
-	<Popover.Trigger>
+	<Popover.Trigger class="w-full">
 		<span
 			role="combobox"
 			aria-expanded={open}
@@ -131,9 +141,13 @@
 					{#if filteredBranches.length > 0}
 						<Command.Group heading="Branches">
 							{#each filteredBranches as branch}
-								<Command.Item value={branch} onSelect={() => selectBranch(branch)}>
-									<Check class={cn('mr-2 h-4 w-4', value === branch ? 'opacity-100' : 'opacity-0')} />
-									<span class="truncate">{branch}</span>
+								<Command.Item value={branch.name} onSelect={() => selectBranch(branch.name)}>
+									<Check class={cn('mr-2 h-4 w-4 shrink-0', value === branch.name ? 'opacity-100' : 'opacity-0')} />
+									<span class="truncate">{branch.name}</span>
+									{#if defaultBranch && branch.name === defaultBranch}
+										<span class="ml-2 shrink-0 text-[10px] font-medium uppercase tracking-wide text-amber-500">default</span>
+									{/if}
+									<span class="ml-auto shrink-0 pl-2 font-mono text-xs text-muted-foreground">{branch.sha}</span>
 								</Command.Item>
 							{/each}
 						</Command.Group>
