@@ -9,6 +9,18 @@
         "text": "Azure Key Vault as a secret provider (bulk pull or inline azurekv:// references)"
       },
       {
+        "type": "feature",
+        "text": "Proton Pass inline references accept vault and item names, not just ids (pass://vault/item/field) (#1449)"
+      },
+      {
+        "type": "feature",
+        "text": "branch selector on git stack, with per-stack branch override (PR#1343, @brx19)"
+      },
+      {
+        "type": "fix",
+        "text": "Infisical secret references now resolve to their value instead of the raw reference (#1447)"
+      },
+      {
         "type": "fix",
         "text": "the version-update dialog no longer duplicates the old tag when the running image is digest-pinned (#1437)"
       },
