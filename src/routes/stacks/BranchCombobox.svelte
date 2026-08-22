@@ -38,6 +38,9 @@
 		onchange?: (value: string) => void;
 		/** Called when the user clears the field (empty value). */
 		onclear?: () => void;
+		/** When set (with onclear), shows a top row that resets to this label,
+		 * e.g. "Repository default (main)". */
+		clearLabel?: string;
 		id?: string;
 		class?: string;
 		placeholder?: string;
@@ -49,6 +52,7 @@
 		loading = false,
 		onchange,
 		onclear,
+		clearLabel,
 		id,
 		class: className,
 		placeholder = 'main'
@@ -117,6 +121,13 @@
 				{#if loading}
 					<Command.Empty>Loading branches…</Command.Empty>
 				{:else}
+					{#if clearLabel && onclear && !searchQuery.trim()}
+						<Command.Item value="__repo_default__" onSelect={clearBranch}>
+							<Check class={cn('mr-2 h-4 w-4', value ? 'opacity-0' : 'opacity-100')} />
+							<GitBranch class="mr-2 h-4 w-4 text-muted-foreground" />
+							<span class="truncate">{clearLabel}</span>
+						</Command.Item>
+					{/if}
 					{#if filteredBranches.length > 0}
 						<Command.Group heading="Branches">
 							{#each filteredBranches as branch}

@@ -1965,7 +1965,7 @@ export async function previewRepoEnvFiles(options: PreviewEnvOptions): Promise<P
 		// Cast credential to GitCredential type (only uses id, authType, sshPrivateKey)
 		env = await buildGitEnv(credential as GitCredential | null);
 
-		// Security (PR #1343 maintainer review): the preview endpoint clones a
+		// Security: the preview endpoint clones a
 		// USER-SUPPLIED URL and reads env files from it — the same SSRF / RCE /
 		// path-traversal surface as the branches endpoint. Apply the shared guards
 		// BEFORE any git subprocess or file read:

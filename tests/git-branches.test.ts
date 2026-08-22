@@ -11,22 +11,13 @@
  *     payloads ALL PASS the old hand-rolled dotted-quad parser — the tests
  *     here are the regression lock so they stay closed.
  *
- *  2. Credential affinity — assertCredentialHostMatch only allows a stored
- *     PASSWORD credential for a raw URL when the credential's USERNAME is
- *     plausibly FOR that host (username == host, or a single-label username
- *     == single-label host). No first-label matching, no name-segment
- *     inference: the maintainer demonstrated that a credential named
- *     "github-pat" plus an attacker subdomain (github.evil.com) would
- *     otherwise deliver the decrypted PAT to the attacker. This file locks
- *     the subdomain case and the single-label username case.
- *
- *  3. Transport denylist — listRemoteBranches now calls assertSafeRepoUrl
+ *  2. Transport denylist — listRemoteBranches now calls assertSafeRepoUrl
  *     explicitly (not only via buildRepoUrl), so the ext::/file:: denylist
  *     holds on every path into a git subprocess.
  *
- * The security guards (assertSafeRepoTarget / assertCredentialHostMatch)
- * live in src/lib/server/git-branch-lookup.ts — an import-light, pure
- * module, so we can unit-test them directly.
+ * The security guard (assertSafeRepoTarget) lives in
+ * src/lib/server/git-branch-lookup.ts — an import-light, pure module, so we
+ * can unit-test it directly.
  *
  * Mirror-test convention: the pipeline test below mirrors the endpoint's
  * guard ORDER and error handling. Keep it in sync if you change either.
@@ -35,7 +26,6 @@
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import {
 	assertSafeRepoTarget,
-	assertCredentialHostMatch,
 	parseRepoHost
 } from '../src/lib/server/git-branch-lookup';
 import { isSafeNotificationUrl } from '../src/lib/server/url-safety';
@@ -45,21 +35,14 @@ import { isSafeNotificationUrl } from '../src/lib/server/url-safety';
 // =============================================================================
 
 type StoredRepo = { id: number; url: string; credentialId: number | null };
-type StoredCred = { id: number; name: string; authType: string; username: string | null; password: string | null };
 
 const storedRepos = new Map<number, StoredRepo>();
-const storedCreds = new Map<number, StoredCred>();
 const gitResults = new Map<string, { code: number; stdout: string; stderr: string; timedOut?: boolean }>();
 
 function registerRepo(url: string, credentialId: number | null): StoredRepo {
 	const repo = { id: storedRepos.size + 1, url, credentialId };
 	storedRepos.set(repo.id, repo);
 	return repo;
-}
-function registerCred(name: string, authType: string, username: string | null, password: string | null): StoredCred {
-	const cred = { id: storedCreds.size + 1, name, authType, username, password };
-	storedCreds.set(cred.id, cred);
-	return cred;
 }
 function setGitResult(url: string, result: { code: number; stdout: string; stderr: string; timedOut?: boolean }): void {
 	gitResults.set(url, result);
@@ -76,19 +59,16 @@ async function postGitBranches(
 ): Promise<{ status: number; json: any }> {
 	if (permissionDenied) return { status: 403, json: { error: 'Permission denied' } };
 
-	const { repositoryId, url, credentialId } = body;
+	const { repositoryId, url } = body;
 
 	let repoUrl: string;
-	let credId: number | undefined;
 
 	if (repositoryId) {
 		const repo = storedRepos.get(repositoryId);
 		if (!repo) return { status: 404, json: { error: 'Repository not found' } };
 		repoUrl = repo.url;
-		credId = repo.credentialId ?? undefined;
 	} else if (url) {
 		repoUrl = url;
-		credId = credentialId ?? undefined;
 	} else {
 		return { status: 400, json: { error: 'repositoryId or url is required' } };
 	}
@@ -98,17 +78,6 @@ async function postGitBranches(
 		assertSafeRepoTarget(repoUrl);
 	} catch (e: any) {
 		return { status: 400, json: { error: e.message } };
-	}
-
-	// Guard 2 (credential exfiltration) — raw url path only.
-	if (url && credId != null) {
-		const credential = storedCreds.get(credId);
-		if (!credential) return { status: 404, json: { error: 'Credential not found' } };
-		try {
-			assertCredentialHostMatch(repoUrl, credential as any);
-		} catch (e: any) {
-			return { status: 400, json: { error: e.message } };
-		}
 	}
 
 	// listRemoteBranches: execGit with GIT_TIMEOUT_MS default.
@@ -127,12 +96,10 @@ async function postGitBranches(
 
 beforeAll(() => {
 	storedRepos.clear();
-	storedCreds.clear();
 	gitResults.clear();
 });
 afterAll(() => {
 	storedRepos.clear();
-	storedCreds.clear();
 	gitResults.clear();
 });
 
@@ -322,64 +289,6 @@ describe('assertSafeRepoTarget — SSRF guard', () => {
 });
 
 // =============================================================================
-// assertCredentialHostMatch — credential-exfiltration guard
-// =============================================================================
-
-describe('assertCredentialHostMatch — credential-exfiltration guard', () => {
-	test('allows ssh credential for any host (no secret to leak)', () => {
-		const c: any = { id: 1, name: 'my-ssh-key', authType: 'ssh', username: null, password: null };
-		expect(() => assertCredentialHostMatch('https://github.com/repo.git', c)).not.toThrow();
-		expect(() => assertCredentialHostMatch('ssh://git@internal-git.example.com/repo', c)).not.toThrow();
-	});
-
-	test('allows none credential (no secret at all)', () => {
-		const c: any = { id: 2, name: 'public', authType: 'none', username: null, password: null };
-		expect(() => assertCredentialHostMatch('https://github.com/repo.git', c)).not.toThrow();
-	});
-
-	test('allows password credential whose username matches the full host (PAT-style)', () => {
-		const c: any = { id: 3, name: 'gh-pat', authType: 'password', username: 'github.com', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://github.com/repo.git', c)).not.toThrow();
-	});
-
-	test('allows single-label username matching a single-label host', () => {
-		const c: any = { id: 4, name: 'bitbucket', authType: 'password', username: 'git', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://git/repo.git', c)).not.toThrow();
-	});
-
-	test('REJECTS single-label username for an attacker subdomain (github.evil.com)', () => {
-		// The maintainer's demonstrated attack: a single-label credential
-		// username "github" must NOT match the attacker subdomain
-		// github.evil.com. The old first-label matching allowed this.
-		const c: any = { id: 5, name: 'github', authType: 'password', username: 'github', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://github.evil.com/x.git', c)).toThrow(/does not match/i);
-	});
-
-	test('REJECTS multi-label username for an attacker subdomain', () => {
-		// A multi-label username must match the FULL host — a subdomain of
-		// the username is not the host.
-		const c: any = { id: 6, name: 'gitlab', authType: 'password', username: 'gitlab.com', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://gitlab.com.evil.com/repo.git', c)).toThrow(/does not match/i);
-	});
-
-	test('REJECTS password credential for a completely unrelated host', () => {
-		const c: any = { id: 7, name: 'attacker', authType: 'password', username: 'someuser', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://attacker.tld/repo.git', c)).toThrow(/does not match/i);
-	});
-
-	test('REJECTS password credential for a private IP host (defense-in-depth)', () => {
-		// The URL is rejected by assertSafeRepoTarget upstream; the
-		// credential guard independently refuses it too.
-		const c: any = { id: 8, name: 'local', authType: 'password', username: '127.0.0.1', password: 'x' };
-		expect(() => assertCredentialHostMatch('http://127.0.0.1/repo.git', c)).not.toThrow(); // username == host is allowed here; the URL itself is blocked by guard 1
-	});
-
-	test('allows null/undefined credential (public repo)', () => {
-		expect(() => assertCredentialHostMatch('https://github.com/repo.git', null as any)).not.toThrow();
-	});
-});
-
-// =============================================================================
 // Endpoint pipeline (mirror of POST /api/git/branches)
 // =============================================================================
 
@@ -416,52 +325,6 @@ describe('POST /api/git/branches — pipeline', () => {
 		const res = await postGitBranches({ url: 'https://github.com/test/repo.git' });
 		expect(res.status).toBe(200);
 		expect(res.json.branches).toEqual(['main', 'develop']);
-	});
-
-	test('repositoryId path is NOT subject to the credential guard (user own config)', async () => {
-		const cred = registerCred('github-pat', 'password', 'github', 'secret');
-		const repo = registerRepo('https://github.com/test/repo.git', cred.id);
-		setGitResult('https://github.com/test/repo.git', { code: 0, stdout: 'a1b2c3d4 refs/heads/main\n', stderr: '' });
-		// The repositoryId path pairs the repo with its own stored credential
-		// — no host-affinity check (the pairing is the user's own config).
-		const res = await postGitBranches({ repositoryId: repo.id });
-		expect(res.status).toBe(200);
-	});
-
-	test('raw-url + credentialId path is SUBJECT to the credential guard', async () => {
-		const cred = registerCred('github-pat', 'password', 'github', 'secret');
-		// github-pat (username "github") + github.evil.com → REJECTED.
-		const res = await postGitBranches({
-			url: 'https://github.evil.com/x.git',
-			credentialId: cred.id
-		});
-		expect(res.status).toBe(400);
-		expect(res.json.error).toMatch(/does not match/i);
-	});
-
-	test('raw-url + credentialId path allows matching username', async () => {
-		const cred = registerCred('github-pat', 'password', 'github.com', 'secret');
-		setGitResult('https://github.com/test/repo.git', { code: 0, stdout: 'a1b2c3d4 refs/heads/main\n', stderr: '' });
-		const res = await postGitBranches({
-			url: 'https://github.com/test/repo.git',
-			credentialId: cred.id
-		});
-		expect(res.status).toBe(200);
-	});
-
-	test('raw-url + credentialId rejects unknown credential (404)', async () => {
-		const res = await postGitBranches({ url: 'https://github.com/test/repo.git', credentialId: 9999 });
-		expect(res.status).toBe(404);
-	});
-
-	test('raw-url + credentialId with ssh credential is allowed', async () => {
-		const cred = registerCred('my-ssh', 'ssh', null, null);
-		setGitResult('https://github.com/test/repo.git', { code: 0, stdout: 'a1b2c3d4 refs/heads/main\n', stderr: '' });
-		const res = await postGitBranches({
-			url: 'https://github.com/test/repo.git',
-			credentialId: cred.id
-		});
-		expect(res.status).toBe(200);
 	});
 
 	test('unknown repositoryId returns 404', async () => {

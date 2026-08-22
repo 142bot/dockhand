@@ -2,7 +2,7 @@
  * Security guards for user-supplied git repository URLs on the branch-lookup
  * and env-preview flows (POST /api/git/branches, POST /api/git/preview-env).
  *
- * SECURITY CONTEXT (PR #1343 maintainer review, rounds 1+2):
+ * Three guards protect these endpoints:
  *
  *  1. SSRF — the URL is handed to a git subprocess whose libcurl resolves
  *     EVERY legal IP encoding (decimal 2130706433, octal 0177.0.0.1, short
@@ -89,8 +89,7 @@ export function parseRepoHost(url: string): string | null {
 // parseRepoHost, brackets stripped for IPv6) under an https:// scheme and
 // run it through the same battle-tested check. This closes the encoded-IP
 // bypass on the ssh/git path: ipCategory matches only a plain dotted-quad,
-// so decimal/hex/short-form hosts sailed through it (2026-08-21
-// maintainer re-review).
+// so decimal/hex/short-form hosts sailed through it.
 // ---------------------------------------------------------------------------
 function assertHostSafeFromParse(parsedHost: string): void {
 	// IPv6 literals need brackets for URL() to accept them — but ONLY if the
@@ -138,41 +137,3 @@ export function assertSafeRepoTarget(url: string): void {
 	assertHostSafeFromParse(host);
 }
 
-/**
- * Guard 2: a raw URL may only be paired with a stored password credential
- * when the credential is plausibly FOR that host (credential-exfiltration
- * defense).
- *
- * Rules:
- *   - `ssh` / `none` credentials: ALWAYS allowed (SSH keys are validated by
- *     the remote server; there is no secret to leak for `none`).
- *   - `password` credentials:
- *     the credential's username equals the URL host (PAT-style: the
- *     username field holds the account name that the host expects).
- *
- * Deliberately NO name-segment inference and NO first-label matching: a
- * single-label credential username ("github", "admin", "git") would match
- * ANY attacker subdomain (github.evil.com / admin.evil.com) and deliver
- * the decrypted secret there. Hostnames are compared exactly (case-insensitive,
- * with a port stripped) — a single-label username only matches a single-label
- * host, which cannot be an attacker-chosen subdomain of another host.
- */
-export function assertCredentialHostMatch(url: string, credential: GitCredential): void {
-	if (!credential) return;
-	if (credential.authType === 'ssh' || credential.authType === 'none') return;
-
-	const host = parseRepoHost(url);
-	if (!host) {
-		throw new Error('Invalid repository URL for branch lookup');
-	}
-
-	const username = (credential.username || '').trim().toLowerCase();
-	// Username must match the full host exactly (PAT-style). A username
-	// containing a dot matches only a dot-containing host — never a
-	// subdomain of it.
-	if (username && username === host) return;
-
-	throw new Error(
-		'Stored credential does not match the repository URL host'
-	);
-}

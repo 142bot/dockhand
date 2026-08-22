@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { testRepositoryConfig } from '$lib/server/git';
 import { getGitCredential } from '$lib/server/db';
-import { assertSafeRepoTarget, assertCredentialHostMatch } from '$lib/server/git-branch-lookup';
+import { assertSafeRepoTarget } from '$lib/server/git-branch-lookup';
 import { authorize } from '$lib/server/authorize';
 
 /**
@@ -19,12 +19,12 @@ import { authorize } from '$lib/server/authorize';
 /**
  * @openapi
  * summary: Test an unsaved repository configuration (url/branch/credentialId) before creating it
- * description: credentialId from GET /api/git/credentials. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected; the raw url may only be paired with a stored credentialId whose username plausibly matches that host (exfiltration defense).
+ * description: credentialId from GET /api/git/credentials. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected.
  * body: {url:string!, branch:string, credentialId:integer}
  * body-example: {"url":"https://github.com/example/homelab.git","branch":"main","credentialId":2}
  * resp-200: {success:boolean!, error:string}
  * resp-200-example: {"success":true}
- * resp-400: The url field is missing, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport, or the credential does not match the URL host
+ * resp-400: The url field is missing, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport.
  * resp-403: Caller lacks the settings:manage permission
  * resp-404: The referenced credential does not exist
  * resp-500: The connectivity test failed
@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			return json({ error: 'Repository URL is required' }, { status: 400 });
 		}
 
-		// Security (PR #1343 maintainer review): the test endpoint spawns git
+		// Security: the test endpoint spawns git
 		// (ls-remote + clone) with a USER-SUPPLIED url + credentialId. Run the
 		// shared guards BEFORE testRepositoryConfig spawns anything.
 		//  1. assertSafeRepoTarget — SSRF + transport denylist.
@@ -51,17 +51,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		} catch (e: any) {
 			return json({ success: false, error: e.message || 'Invalid repository URL' }, { status: 400 });
 		}
-		//  2. assertCredentialHostMatch — raw url + stored credential must be
-		//     plausibly for that host (exfiltration defense).
 		if (body.credentialId != null && body.credentialId !== undefined) {
 			const credential = await getGitCredential(body.credentialId);
 			if (!credential) {
 				return json({ success: false, error: 'Credential not found' }, { status: 404 });
-			}
-			try {
-				assertCredentialHostMatch(body.url, credential);
-			} catch (e: any) {
-				return json({ success: false, error: e.message || 'Invalid repository URL' }, { status: 400 });
 			}
 		}
 

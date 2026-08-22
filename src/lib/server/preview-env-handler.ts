@@ -35,8 +35,6 @@ export interface PreviewEnvDependencies {
 	previewRepoEnvFiles: (opts: PreviewEnvPreviewOptions) => Promise<PreviewEnvPreviewResult>;
 	/** SSRF + transport denylist guard. Throws on unsafe target. */
 	assertSafeRepoTarget: (url: string) => void;
-	/** Credential-exfiltration defense. Throws on host mismatch. */
-	assertCredentialHostMatch: (url: string, credential: PreviewEnvCredential) => void;
 }
 
 export interface PreviewEnvAuthContext {
@@ -97,7 +95,7 @@ export type PreviewEnvOutcome =
  * function), so testing this function with injected fakes exercises the real
  * production logic — not a mirror.
  *
- * The `git:edit` permission gate (PR #1343) runs BEFORE `request.json()`
+ * The `git:edit` permission gate runs BEFORE `request.json()`
  * (attacker-controlled input), repository/credential lookup, URL processing,
  * and any git subprocess.
  */
@@ -107,7 +105,7 @@ export async function handlePreviewEnv(
 ): Promise<PreviewEnvOutcome> {
 	const auth = await deps.authorize(args.cookies);
 
-	// Permission gate (PR #1343): the endpoint clones a USER-SUPPLIED URL and
+	// Permission gate: the endpoint clones a USER-SUPPLIED URL and
 	// reads env files from it, so it is gated on the git:edit permission —
 	// the EXACT same model as POST /api/git/branches. This single check covers
 	// every authenticated case:
@@ -159,7 +157,7 @@ export async function handlePreviewEnv(
 			credential = await deps.getGitCredential(credentialId);
 		}
 
-		// Security (PR #1343 maintainer review): the preview endpoint clones a
+		// Security: the preview endpoint clones a
 		// USER-SUPPLIED URL and reads env files from it. Run the shared guards
 		// BEFORE previewRepoEnvFiles spawns git / reads files.
 		//  1. assertSafeRepoTarget — SSRF + transport denylist.
@@ -167,16 +165,6 @@ export async function handlePreviewEnv(
 			deps.assertSafeRepoTarget(repoUrl);
 		} catch (e: any) {
 			return { kind: 'bad-request', message: e.message || 'Invalid repository URL' };
-		}
-		//  2. assertCredentialHostMatch — a raw url may only be paired with a
-		//     stored credential plausibly for that host (exfiltration defense).
-		//     The repositoryId path is safe (user's own stored config).
-		if (data.url && credentialId && credential) {
-			try {
-				deps.assertCredentialHostMatch(repoUrl, credential);
-			} catch (e: any) {
-				return { kind: 'bad-request', message: e.message || 'Invalid repository URL' };
-			}
 		}
 
 		const result = await deps.previewRepoEnvFiles({

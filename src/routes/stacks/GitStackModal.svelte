@@ -163,7 +163,6 @@
 	// Sentinel select value meaning "no per-stack override — use the repository's
 	// default branch". Contains ':' which is invalid in git refs, so it can never
 	// collide with a real branch name.
-	const REPO_DEFAULT_BRANCH_VALUE = ':repository-default:';
 
 	// Stack name validation: Docker Compose requires lowercase; must start with a
 	// letter or number, and contain only lowercase letters, numbers, hyphens, underscores
@@ -885,36 +884,17 @@
 						{#if formRepoMode === 'existing' && selectedRepo}
 							<div class="space-y-2">
 								<Label for="existing-repo-branch">Branch</Label>
-								<Select.Root type="single" value={formBranch || REPO_DEFAULT_BRANCH_VALUE} onValueChange={(v) => { formBranch = v === REPO_DEFAULT_BRANCH_VALUE ? null : v; }}>
-									<Select.Trigger class="w-full">
-										<span class="flex items-center gap-2">
-											<GitBranch class="w-4 h-4 text-muted-foreground" />
-											{#if branchesLoading}
-												<Loader2 class="w-4 h-4 animate-spin" />
-											{:else if formBranch}
-												{formBranch}
-											{:else}
-												<span class="text-muted-foreground">Repository default ({selectedRepo.branch})</span>
-											{/if}
-										</span>
-									</Select.Trigger>
-									<Select.Content>
-										<Select.Item value={REPO_DEFAULT_BRANCH_VALUE}>
-											<span class="flex items-center gap-2">
-												<GitBranch class="w-4 h-4 text-muted-foreground" />
-												Repository default ({selectedRepo.branch})
-											</span>
-										</Select.Item>
-										{#if branches.length > 0}
-											{#each branches as branch}
-												{#if branch !== selectedRepo.branch}
-													<Select.Item value={branch}>{branch}</Select.Item>
-												{/if}
-											{/each}
-										{/if}
-									</Select.Content>
-								</Select.Root>
-								<p class="text-xs text-muted-foreground">Branch this stack deploys from. "Repository default" follows the branch configured on the repository.</p>
+								<BranchCombobox
+									id="existing-repo-branch"
+									value={formBranch ?? ''}
+									branches={branches}
+									loading={branchesLoading}
+									placeholder="Repository default ({selectedRepo.branch})"
+									clearLabel="Repository default ({selectedRepo.branch})"
+									onchange={(v) => { formBranch = v; }}
+									onclear={() => { formBranch = null; }}
+								/>
+								<p class="text-xs text-muted-foreground">Branch this stack deploys from. Leave empty to follow the branch configured on the repository ({selectedRepo.branch}).</p>
 							</div>
 						{/if}
 					{:else}
@@ -1037,8 +1017,8 @@
 			{#if gitStack && selectedRepo}
 				<div class="space-y-2">
 					<Label>Repository</Label>
-					<div class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-						<FolderGit2 class="w-3.5 h-3.5 shrink-0" />
+					<div class="flex h-9 items-center gap-2 rounded-md border border-input bg-muted/50 px-3 py-1 text-sm text-muted-foreground">
+						<FolderGit2 class="w-4 h-4 shrink-0" />
 						<span class="truncate" title={selectedRepo.url}>{selectedRepo.url}</span>
 					</div>
 				</div>
@@ -1047,36 +1027,17 @@
 			{#if gitStack && selectedRepo}
 				<div class="space-y-2">
 					<Label for="stack-branch">Branch</Label>
-					<Select.Root type="single" value={formBranch || REPO_DEFAULT_BRANCH_VALUE} onValueChange={(v) => { formBranch = v === REPO_DEFAULT_BRANCH_VALUE ? null : v; }}>
-						<Select.Trigger class="w-full">
-							<span class="flex items-center gap-2">
-								<GitBranch class="w-4 h-4 text-muted-foreground" />
-								{#if branchesLoading}
-									<Loader2 class="w-4 h-4 animate-spin" />
-								{:else if formBranch}
-									{formBranch}
-								{:else}
-									<span class="text-muted-foreground">Repository default ({selectedRepo.branch})</span>
-								{/if}
-							</span>
-						</Select.Trigger>
-						<Select.Content>
-							<Select.Item value={REPO_DEFAULT_BRANCH_VALUE}>
-								<span class="flex items-center gap-2">
-									<GitBranch class="w-4 h-4 text-muted-foreground" />
-									Repository default ({selectedRepo.branch})
-								</span>
-							</Select.Item>
-							{#if branches.length > 0}
-								{#each branches as branch}
-									{#if branch !== selectedRepo.branch}
-										<Select.Item value={branch}>{branch}</Select.Item>
-									{/if}
-								{/each}
-							{/if}
-						</Select.Content>
-					</Select.Root>
-					<p class="text-xs text-muted-foreground">Branch this stack deploys from. "Repository default" follows the branch configured on the repository.</p>
+					<BranchCombobox
+						id="stack-branch"
+						value={formBranch ?? ''}
+						branches={branches}
+						loading={branchesLoading}
+						placeholder="Repository default ({selectedRepo.branch})"
+						clearLabel="Repository default ({selectedRepo.branch})"
+						onchange={(v) => { formBranch = v; }}
+						onclear={() => { formBranch = null; }}
+					/>
+					<p class="text-xs text-muted-foreground">Branch this stack deploys from. Leave empty to follow the branch configured on the repository ({selectedRepo.branch}).</p>
 				</div>
 			{/if}
 

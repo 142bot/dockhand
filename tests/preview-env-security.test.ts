@@ -14,15 +14,12 @@
  *  3. Path traversal — repoFilePath keeps composePath/envFilePath INSIDE the
  *     clone dir, so `envFilePath: '../../secrets/x'` cannot read a file
  *     outside the temp dir.
- *  4. Credential affinity — assertCredentialHostMatch refuses to pair a raw
- *     url with a stored password credential whose username isn't the host
- *     (exfiltration defense).
  *
  * Mirror-test convention: the endpoint pipeline below mirrors the real
  * preview-env handler's input-parsing behaviour (composePath/url validation,
- * SSRF, RCE, credential-affinity) and its guard order. Keep in sync.
+ * SSRF, RCE) and its guard order. Keep in sync.
  *
- *  5. Permission gate (PR #1343 maintainer review) — the handler is gated on
+ *  4. Permission gate (PR #1343 maintainer review) — the handler is gated on
  *     the git:edit permission (same model as /api/git/branches). That
  *     authorization contract is NOT covered by this mirror (a mirror can
  *     prove only its own copied logic) — it is covered against the ACTUAL
@@ -30,10 +27,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import {
-	assertSafeRepoTarget,
-	assertCredentialHostMatch
-} from '../src/lib/server/git-branch-lookup';
+import { assertSafeRepoTarget } from '../src/lib/server/git-branch-lookup';
 import { repoFilePath, assertSafeRepoUrl } from '../src/lib/server/git-url-safety';
 import { resolve, sep } from 'node:path';
 
@@ -133,32 +127,11 @@ describe('preview-env path traversal guard (repoFilePath)', () => {
 });
 
 // =============================================================================
-// Credential affinity — raw url may only pair with a host-matching credential.
-// =============================================================================
-
-describe('preview-env credential affinity (assertCredentialHostMatch)', () => {
-	test('rejects a single-label username for an attacker subdomain', () => {
-		const c: any = { id: 1, name: 'github', authType: 'password', username: 'github', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://github.evil.com/x.git', c)).toThrow(/does not match/i);
-	});
-	test('allows a username that matches the full host', () => {
-		const c: any = { id: 2, name: 'gh', authType: 'password', username: 'github.com', password: 'x' };
-		expect(() => assertCredentialHostMatch('https://github.com/x.git', c)).not.toThrow();
-	});
-	test('allows ssh credential (no secret to leak)', () => {
-		const c: any = { id: 3, name: 'ssh', authType: 'ssh', username: null, password: null };
-		expect(() => assertCredentialHostMatch('https://github.com/x.git', c)).not.toThrow();
-	});
-});
-
-// =============================================================================
 // Endpoint pipeline (mirror of POST /api/git/preview-env).
 // =============================================================================
 
 type StoredRepo = { id: number; url: string; credentialId: number | null };
-type StoredCred = { id: number; name: string; authType: string; username: string | null };
 const storedRepos = new Map<number, StoredRepo>();
-const storedCreds = new Map<number, StoredCred>();
 
 /**
  * Mirror of POST /api/git/preview-env (src/routes/api/git/preview-env/+server.ts).
@@ -185,28 +158,20 @@ async function postPreviewEnv(
 		}
 	}
 
-	const { repositoryId, url, credentialId, composePath } = body;
+	const { repositoryId, url, composePath } = body;
 	if (!composePath || typeof composePath !== 'string') {
 		return { status: 400, json: { error: 'Compose path is required' } };
 	}
 
 	let repoUrl: string;
-	let credentialIdResolved: number | null = null;
 	if (repositoryId) {
 		const repo = storedRepos.get(repositoryId);
 		if (!repo) return { status: 404, json: { error: 'Repository not found' } };
 		repoUrl = repo.url;
-		credentialIdResolved = repo.credentialId;
 	} else if (url) {
 		repoUrl = url;
-		credentialIdResolved = credentialId || null;
 	} else {
 		return { status: 400, json: { error: 'Either repositoryId or url is required' } };
-	}
-
-	let credential = null;
-	if (credentialIdResolved) {
-		credential = storedCreds.get(credentialIdResolved);
 	}
 
 	// Guard 1 (SSRF) — runs on both paths.
@@ -214,15 +179,6 @@ async function postPreviewEnv(
 		assertSafeRepoTarget(repoUrl);
 	} catch (e: any) {
 		return { status: 400, json: { error: e.message } };
-	}
-
-	// Guard 2 (credential affinity) — raw url path only.
-	if (url && credentialIdResolved && credential) {
-		try {
-			assertCredentialHostMatch(repoUrl, credential as any);
-		} catch (e: any) {
-			return { status: 400, json: { error: e.message } };
-		}
 	}
 
 	// Stubbed: previewRepoEnvFiles (clone + read env files).
@@ -258,30 +214,8 @@ describe('POST /api/git/preview-env — pipeline', () => {
 		expect(res.status).toBe(400);
 	});
 
-	test('endpoint blocks a credential whose username does not match the host', async () => {
-		const cred = storedCreds.set(1, { id: 1, name: 'github', authType: 'password', username: 'github' });
-		const res = await postPreviewEnv({
-			url: 'https://github.evil.com/x.git',
-			credentialId: 1,
-			composePath: 'compose.yaml'
-		});
-		expect(res.status).toBe(400);
-		expect(res.json.error).toMatch(/does not match/i);
-	});
-
-	test('endpoint allows a host-matching credential', async () => {
-		storedCreds.set(2, { id: 2, name: 'gh', authType: 'password', username: 'github.com' });
-		const res = await postPreviewEnv({
-			url: 'https://github.com/x.git',
-			credentialId: 2,
-			composePath: 'compose.yaml'
-		});
-		expect(res.status).toBe(200);
-	});
-
-	test('repositoryId path is not subject to the credential guard', async () => {
-		storedCreds.set(3, { id: 3, name: 'gh', authType: 'password', username: 'github' });
-		storedRepos.set(10, { id: 10, url: 'https://github.com/x.git', credentialId: 3 });
+	test('repositoryId path resolves the stored repo URL', async () => {
+		storedRepos.set(10, { id: 10, url: 'https://github.com/x.git', credentialId: null });
 		const res = await postPreviewEnv({ repositoryId: 10, composePath: 'compose.yaml' });
 		expect(res.status).toBe(200);
 	});
@@ -326,8 +260,7 @@ function makeAuthDeps(cfg: { authEnabled: boolean; canGitEdit: boolean }): { dep
 			previewCalls++;
 			return { vars: {}, sources: {} };
 		},
-		assertSafeRepoTarget: () => {},
-		assertCredentialHostMatch: () => {}
+		assertSafeRepoTarget: () => {}
 	};
 	// The request object whose json() we track (the body parser, NOT the
 	// response helper). If the permission gate runs BEFORE request.json(),

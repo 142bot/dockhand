@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Dockhand API",
-    "version": "1.0.43",
+    "version": "1.0.44",
     "description": "Auto-generated from src/routes/**/+server.ts by scripts/generate-openapi.ts. Path, HTTP method, tag, and auth requirement are derived automatically from the route tree and hooks.server.ts PUBLIC_PATHS. Parameters, response status codes, and request body fields are additionally auto-detected from each handler’s own source (query params via url.searchParams, status codes via status:/error(), body fields via destructuring) — adding a new endpoint therefore requires ZERO manual spec edits to show up with real params/responses. An optional, additive `@openapi` JSDoc annotation on a handler replaces the generic auto-descriptions with hand-written summaries, exact types, and examples."
   },
   "servers": [
@@ -12226,7 +12226,7 @@
             }
           },
           "400": {
-            "description": "The URL points at a loopback/link-local/metadata/reserved target, the credential does not match the URL host, or neither repositoryId nor url was supplied"
+            "description": "The URL points at a loopback/link-local/metadata/reserved target, or neither repositoryId nor url was supplied"
           },
           "403": {
             "description": "Permission denied (requires git:edit)"
@@ -12246,7 +12246,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. A raw url may only be paired with a stored credentialId whose username plausibly matches that host (SSH credentials are always allowed). The ls-remote is bounded by a hard timeout.",
+        "description": "Accepts either repositoryId (an existing repository, using its stored URL and credential) or url + credentialId (a new repository). SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ls-remote is bounded by a hard timeout.",
         "requestBody": {
           "required": true,
           "content": {
@@ -12799,7 +12799,7 @@
             }
           },
           "400": {
-            "description": "composePath missing, neither repositoryId nor url supplied, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport (ext::/file::), the credential does not match the URL host, the compose/env path escapes the repository, or the repo/env-file preview reported an error"
+            "description": "composePath missing, neither repositoryId nor url supplied, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport (ext::/file::), the compose/env path escapes the repository, or the repo/env-file preview reported an error"
           },
           "403": {
             "description": "Permission denied (requires the git:edit permission — same model as /api/git/branches; an unauthenticated or read-only user is denied here rather than via a separate 401)"
@@ -12819,7 +12819,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "repositoryId from GET /api/git/repositories. credentialId from GET /api/git/credentials. SECURITY: requires the git:edit permission when authentication is enabled (403 otherwise). The repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected; the raw url may only be paired with a stored credentialId whose username plausibly matches that host (exfiltration defense); and composePath/envFilePath are constrained to stay inside the cloned repository (path traversal).",
+        "description": "repositoryId from GET /api/git/repositories. credentialId from GET /api/git/credentials. SECURITY: requires the git:edit permission when authentication is enabled (403 otherwise). The repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected; and composePath/envFilePath are constrained to stay inside the cloned repository (path traversal).",
         "requestBody": {
           "required": true,
           "content": {
@@ -13571,7 +13571,7 @@
             }
           },
           "400": {
-            "description": "The url field is missing, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport, or the credential does not match the URL host"
+            "description": "The url field is missing, the URL points at a loopback/link-local/metadata/reserved target, the URL is an unsupported transport."
           },
           "403": {
             "description": "Caller lacks the settings:manage permission"
@@ -13591,7 +13591,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "credentialId from GET /api/git/credentials. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected; the raw url may only be paired with a stored credentialId whose username plausibly matches that host (exfiltration defense).",
+        "description": "credentialId from GET /api/git/credentials. SECURITY: the repository target is checked against the shared SSRF policy — loopback, link-local/cloud-metadata and other reserved dangerous targets are rejected, while ordinary private-LAN addresses are intentionally allowed so self-hosted Git servers remain supported. The ext::/file:: transports and local paths are rejected.",
         "requestBody": {
           "required": true,
           "content": {
