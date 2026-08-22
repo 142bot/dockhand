@@ -14,7 +14,7 @@
  * Two resolution modes:
  *   - Bulk pull: `item list --vault-name <selector> --output json --show-secrets`,
  *     mapping each item to one env var (title -> primary secret).
- *   - Inline references: `pass://SHARE_ID/ITEM_ID[/FIELD]`, resolved one field at
+ *   - Inline references: `pass://VAULT/ITEM/FIELD` (id or name), resolved one field at
  *     a time via `item view <uri> --output json`.
  *
  * The access token is passed via the PROTON_PASS_PERSONAL_ACCESS_TOKEN
@@ -39,11 +39,14 @@ const VIEW_OUTPUT_LIMIT = 1 * 1024 * 1024;
 const LOGIN_OUTPUT_LIMIT = 64 * 1024;
 const STDERR_OUTPUT_LIMIT = 64 * 1024;
 
-// pass://SHARE_ID/ITEM_ID/FIELD. Share/item ids are opaque base64url-ish tokens
-// (Proton uses url-safe base64 with '=' padding). The FIELD segment is required:
-// with a field, `item view` prints the bare field value, which is unambiguous;
-// without one it would print the whole item and there is no single "the secret".
-const PASS_REF_RE = /^pass:\/\/[A-Za-z0-9_=-]+\/[A-Za-z0-9_=-]+\/[^/\s]+$/;
+// pass://VAULT/ITEM/FIELD. VAULT and ITEM may be an opaque share/item id OR a
+// human-readable name (pass-cli resolves names to ids itself); names can contain
+// spaces, so those two segments allow any char except a path separator or a control
+// char (newline/tab). The FIELD segment is required and kept tight (no spaces): with
+// a field, `item view` prints the bare field value, which is unambiguous; without one
+// it would print the whole item and there is no single "the secret". The ref is passed
+// to pass-cli as a single argv element (spawn shell:false), so a space is safe.
+const PASS_REF_RE = /^pass:\/\/[^/\n\r\t]+\/[^/\n\r\t]+\/[^/\s]+$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
@@ -267,7 +270,7 @@ function vaultName(selector: string): string {
 function passReference(value: string): string {
 	const ref = value.trim();
 	if (!PASS_REF_RE.test(ref)) {
-		throw new PassCliError('Proton Pass reference must be pass://SHARE_ID/ITEM_ID[/FIELD]');
+		throw new PassCliError('Proton Pass reference must be pass://VAULT/ITEM/FIELD (id or name)');
 	}
 	return ref;
 }
