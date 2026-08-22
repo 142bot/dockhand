@@ -79,6 +79,13 @@ function toPort(s: string): number | null {
 const DB_CACHE_IMAGE =
 	/(?:^|\/)(postgres|mysql|mariadb|mongo|redis|memcached|rabbitmq|elasticsearch|clickhouse|cassandra|couchdb|influxdb)(?::|$)/i;
 
+// Admin / management UIs that expose control over data or the host. Broadly
+// published (0.0.0.0) these are worse than a password-protected datastore: many
+// ship with a default or no login. Kept DISJOINT from DB_CACHE_IMAGE so a given
+// service produces at most one exposure finding (datastore=warn, panel=error).
+const ADMIN_PANEL_IMAGE =
+	/(?:^|\/)(adminer|phpmyadmin|pgadmin\d?|portainer(?:-ce|-ee)?|cloudbeaver|mongo-express|redis-?commander|dpage\/pgadmin\d?)(?::|$)/i;
+
 // Env-var NAMES that look like a secret (matched case-insensitively as a whole word part).
 // Secret-looking env NAMES. Anchored on word/underscore boundaries so a secret word
 // must be a whole segment (matches DB_PASSWORD, API_KEY; not TOKENIZED, PASSWORD_POLICY-
@@ -88,6 +95,11 @@ const SECRET_NAME =
 // `*_FILE` / `*_PATH` name a file to READ the secret from - that's the SAFE pattern
 // (Docker/compose secrets), so don't flag those even if the name contains "password".
 const SECRET_FILE_REF = /(_file|_path)$/i;
+
+// Dockhand's own image (any registry prefix / tag). A stack deploying Dockhand
+// legitimately needs the Docker socket, so the socket-mount rule treats it as
+// info, not a misconfiguration.
+const DOCKHAND_IMAGE = /(?:^|\/)(?:fin?sys\/)?dockhand(?::|$)/i;
 
 // Host paths that must never be bind-mounted writable - a rw mount here = own the host.
 const SENSITIVE_HOST_ROOTS = ['/', '/etc', '/usr', '/bin', '/sbin', '/boot', '/lib', '/var', '/root'];
@@ -138,6 +150,141 @@ function bindSource(v: unknown): { source: string; readonly: boolean } | null {
 		return { source: o.source, readonly: o.read_only === true };
 	}
 	return null;
+}
+
+// --- Docker socket-proxy classifier (adapted from sencho #1791) ------------------
+//
+// A well-configured docker-socket-proxy sidecar is intentional, not a footgun, so
+// it must not be flagged like a direct socket mount. These pure helpers read the
+// RAW parsed compose (we have no rendered effective model in this linter), so
+// per-network `internal:` is read literally from the top-level networks: block.
+
+const SOCKET_PROXY_IMAGE_HINTS = [
+	'tecnativa/docker-socket-proxy',
+	'lscr.io/linuxserver/socket-proxy',
+	'docker-socket-proxy'
+];
+
+// docker-socket-proxy API-group env flags. A group is "enabled" only when its
+// rendered value is exactly `1` (proxy convention); key presence alone is not.
+const PROXY_API_FLAGS = new Set([
+	'CONTAINERS', 'IMAGES', 'INFO', 'EVENTS', 'NETWORKS', 'VOLUMES', 'SERVICES',
+	'TASKS', 'NODES', 'SECRETS', 'CONFIGS', 'SWARM', 'SYSTEM', 'BUILD', 'COMMIT',
+	'DISTRIBUTION', 'EXEC', 'PING', 'PLUGINS', 'SESSION', 'POST', 'DELETE'
+]);
+const MUTATING_PROXY_API_FLAGS = new Set(['POST', 'DELETE']);
+
+/** All docker.sock bind mounts of a service (short or long form). */
+function socketBinds(svc: Record<string, unknown>): { readonly: boolean }[] {
+	const vols = Array.isArray(svc.volumes) ? svc.volumes : [];
+	const out: { readonly: boolean }[] = [];
+	for (const v of vols) {
+		const src = typeof v === 'string' ? v : asRecord(v)?.source;
+		if (typeof src === 'string' && src.includes('docker.sock')) {
+			const raw = typeof v === 'string' ? v : '';
+			const parts = raw.split(':');
+			const readonly =
+				(parts.length >= 3 && optsAreReadonly(parts[parts.length - 1])) ||
+				asRecord(v)?.read_only === true;
+			out.push({ readonly });
+		}
+	}
+	return out;
+}
+
+function mountsDockerSocket(svc: Record<string, unknown>): boolean {
+	return socketBinds(svc).length > 0;
+}
+
+/** The enabled proxy API-group flag NAMES (value exactly `1`). */
+function enabledProxyApiFlags(svc: Record<string, unknown>): string[] {
+	return envEntries(svc)
+		.filter((e) => PROXY_API_FLAGS.has(e.key.toUpperCase()) && e.value?.trim() === '1')
+		.map((e) => e.key.toUpperCase());
+}
+
+function hasSocketProxyImage(svc: Record<string, unknown>): boolean {
+	const image = typeof svc.image === 'string' ? svc.image.toLowerCase() : '';
+	return SOCKET_PROXY_IMAGE_HINTS.some((h) => image.includes(h));
+}
+
+function hasSocketProxyNameHint(name: string, svc: Record<string, unknown>): boolean {
+	const cn = typeof svc.container_name === 'string' ? svc.container_name : '';
+	return `${name} ${cn}`.toLowerCase().replace(/[_.]/g, '-').includes('socket-proxy');
+}
+
+/**
+ * Is this service a dedicated Docker socket proxy? A known image is an artifact
+ * identity, so it stands alone. A service NAME is author-controlled free text, so
+ * it only counts with an observable fact (a read-only socket, or >=1 enabled API
+ * flag). With neither name nor image hint, require both. Prefer false negatives:
+ * a miss keeps the high direct-mount finding.
+ */
+function isSocketProxyService(name: string, svc: Record<string, unknown>): boolean {
+	if (!mountsDockerSocket(svc)) return false;
+	if (hasSocketProxyImage(svc)) return true;
+	const readOnly = socketBinds(svc).some((b) => b.readonly);
+	const apiKeyCount = enabledProxyApiFlags(svc).length;
+	if (hasSocketProxyNameHint(name, svc)) return readOnly || apiKeyCount >= 1;
+	return readOnly && apiKeyCount >= 2;
+}
+
+/** The service NAMES that are classified socket proxies in this compose. */
+function socketProxyNames(p: ParsedCompose): string[] {
+	return Object.entries(services(p))
+		.filter(([name, svc]) => isSocketProxyService(name, svc))
+		.map(([name]) => name);
+}
+
+/** Network keys a service is attached to (array or map form); empty = implicit default. */
+function serviceNetworkKeys(svc: Record<string, unknown>): string[] {
+	const nets = svc.networks;
+	if (Array.isArray(nets)) return nets.filter((n): n is string => typeof n === 'string');
+	const rec = asRecord(nets);
+	return rec ? Object.keys(rec) : [];
+}
+
+/**
+ * True unless EVERY network the proxy joins is declared `internal: true` in the
+ * top-level networks: block. No membership -> implicit default network (not
+ * internal). A network the file does not describe cannot be shown internal.
+ * NOTE: reads the LITERAL source networks: block, not a merged/extends model.
+ */
+function proxyAttachesNonInternalNetwork(p: ParsedCompose, svc: Record<string, unknown>): boolean {
+	const keys = serviceNetworkKeys(svc);
+	if (keys.length === 0) return true;
+	const topNets = asRecord(p.doc?.networks) ?? {};
+	return keys.some((k) => asRecord(topNets[k])?.internal !== true);
+}
+
+/** tcp:// hosts a service points its Docker client at (DOCKER_HOST env + tcp in command). */
+function dockerEndpointHosts(svc: Record<string, unknown>): string[] {
+	const hosts: string[] = [];
+	for (const e of envEntries(svc)) {
+		if (e.key.toUpperCase() === 'DOCKER_HOST' && e.value) {
+			const m = /tcp:\/\/([^:/\s]+)/i.exec(e.value);
+			if (m) hosts.push(m[1].toLowerCase());
+		}
+	}
+	const cmd = svc.command;
+	const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : typeof cmd === 'string' ? cmd : '';
+	for (const m of cmdStr.matchAll(/tcp:\/\/([^:/\s]+)/gi)) hosts.push(m[1].toLowerCase());
+	return hosts;
+}
+
+/** Names a dependent could use to reach this proxy on a shared network. */
+function proxyReachableNames(name: string, svc: Record<string, unknown>): string[] {
+	const out = [name.toLowerCase()];
+	if (typeof svc.container_name === 'string') out.push(svc.container_name.toLowerCase());
+	// network aliases (map form: networks: { net: { aliases: [...] } })
+	const rec = asRecord(svc.networks);
+	if (rec) {
+		for (const membership of Object.values(rec)) {
+			const aliases = asRecord(membership)?.aliases;
+			if (Array.isArray(aliases)) for (const a of aliases) if (typeof a === 'string') out.push(a.toLowerCase());
+		}
+	}
+	return out;
 }
 
 // --- rule catalog ---------------------------------------------------------------
@@ -476,31 +623,196 @@ export const RULES: RuleDefinition[] = [
 		defaultSeverity: 'warn', // graded: the check upgrades rw to error itself
 		check(p) {
 			const out: RuleFinding[] = [];
+			const proxies = socketProxyNames(p);
+			// When the stack already runs a proxy, point a direct-mount finding at it
+			// instead of telling the user to adopt something they already have.
+			const proxyHint =
+				proxies.length > 0
+					? `This stack already runs a socket proxy (${proxies.map((n) => `"${n}"`).join(', ')}); route this service through it instead of mounting docker.sock directly.`
+					: 'Read-write docker.sock = root on the host. Use a scoped socket proxy.';
 			for (const [name, svc] of Object.entries(services(p))) {
+				// A classified socket proxy legitimately mounts the socket - the
+				// docker-socket-proxy* rules cover it, so skip it here.
+				if (isSocketProxyService(name, svc)) continue;
+				// Dockhand itself REQUIRES the socket (rw) to manage Docker, so a stack
+				// that deploys Dockhand is not a footgun - info note, not error.
+				const image = typeof svc.image === 'string' ? svc.image : '';
+				const isDockhand = DOCKHAND_IMAGE.test(image);
 				const vols = Array.isArray(svc.volumes) ? svc.volumes : [];
 				for (let i = 0; i < vols.length; i++) {
 					const v = vols[i];
 					const src = typeof v === 'string' ? v : asRecord(v)?.source;
 					const raw = typeof v === 'string' ? v : '';
-					if (typeof src === 'string' && src.includes('/var/run/docker.sock')) {
+					if (typeof src === 'string' && src.includes('docker.sock')) {
 						// Read-only if the short-form option field contains `ro` (ro / ro,z /
 						// z,ro), or the long form sets read_only. Only 3+ segments have opts.
 						const parts = raw.split(':');
 						const readonly =
 							(parts.length >= 3 && optsAreReadonly(parts[parts.length - 1])) ||
 							asRecord(v)?.read_only === true;
-						out.push({
-							ruleId: 'DOCKER_SOCKET_MOUNT',
-							severity: readonly ? 'warn' : 'error',
-							service: name,
-							message: `"${name}" mounts the Docker socket${readonly ? ' (read-only)' : ' read-write (full daemon control)'}`,
-							hint: readonly
-								? 'Read-only still exposes the daemon; consider a socket proxy.'
-								: 'Read-write docker.sock = root on the host. Use a scoped socket proxy.',
-							line: p.lineOf(['services', name, 'volumes', i]) ?? p.lineOf(['services', name])
-						});
+						const line = p.lineOf(['services', name, 'volumes', i]) ?? p.lineOf(['services', name]);
+						if (isDockhand) {
+							out.push({
+								ruleId: 'DOCKER_SOCKET_MOUNT',
+								severity: 'info',
+								service: name,
+								message: `"${name}" is Dockhand and mounts the Docker socket - this is a required configuration, not a misconfiguration`,
+								hint: 'Dockhand needs the socket to manage Docker. To harden it, put a scoped socket proxy in front.',
+								line
+							});
+						} else {
+							out.push({
+								ruleId: 'DOCKER_SOCKET_MOUNT',
+								severity: readonly ? 'warn' : 'error',
+								service: name,
+								message: `"${name}" mounts the Docker socket${readonly ? ' (read-only)' : ' read-write (full daemon control)'}`,
+								hint: readonly ? 'Read-only still exposes the daemon; consider a socket proxy.' : proxyHint,
+								line
+							});
+						}
 					}
 				}
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY',
+		description: 'A Docker socket proxy sidecar is present (intentional)',
+		group: 'security',
+		defaultSeverity: 'info',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const name of socketProxyNames(p)) {
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY',
+					service: name,
+					message: `"${name}" is a Docker socket proxy - it mounts the socket on purpose to expose a scoped API to other services`,
+					hint: 'Keep it on an internal network, do not publish its port, and enable only the API groups dependents need.',
+					line: p.lineOf(['services', name])
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY_WRITABLE',
+		description: 'A Docker socket proxy mounts the socket read-write',
+		group: 'security',
+		defaultSeverity: 'error',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				if (!isSocketProxyService(name, svc)) continue;
+				if (!socketBinds(svc).some((b) => !b.readonly)) continue;
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY_WRITABLE',
+					service: name,
+					message: `Socket proxy "${name}" mounts docker.sock read-write - a compromise of the proxy then grants full control of the host`,
+					hint: 'Append `:ro` to the socket bind and let the API-group flags do the restricting.',
+					line: p.lineOf(['services', name, 'volumes']) ?? p.lineOf(['services', name])
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY_PUBLISHED',
+		description: 'A Docker socket proxy publishes a host port',
+		group: 'security',
+		defaultSeverity: 'error',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				if (!isSocketProxyService(name, svc)) continue;
+				const hasPublished = ports(svc).some((e) => {
+					const parsed = parsePortEntry(e);
+					return parsed?.hostPort != null;
+				});
+				if (!hasPublished) continue;
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY_PUBLISHED',
+					service: name,
+					message: `Socket proxy "${name}" publishes a port to the host, making the proxied Docker API reachable beyond the compose network`,
+					hint: 'Remove the host port mapping; let dependents reach the proxy only over an internal compose network.',
+					line: p.lineOf(['services', name, 'ports']) ?? p.lineOf(['services', name])
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY_MUTATING',
+		description: 'A Docker socket proxy allows mutating (POST/DELETE) API access',
+		group: 'security',
+		defaultSeverity: 'warn',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				if (!isSocketProxyService(name, svc)) continue;
+				const mutating = enabledProxyApiFlags(svc).filter((f) => MUTATING_PROXY_API_FLAGS.has(f));
+				if (mutating.length === 0) continue;
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY_MUTATING',
+					service: name,
+					message: `Socket proxy "${name}" enables ${mutating.join(' and ')} - dependents can perform write/delete operations through it`,
+					hint: 'Disable POST and DELETE unless a dependent genuinely needs mutating Docker API calls.',
+					line: p.lineOf(['services', name])
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY_EXPOSURE',
+		description: 'A Docker socket proxy sits on a non-internal network',
+		group: 'security',
+		defaultSeverity: 'warn',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				if (!isSocketProxyService(name, svc)) continue;
+				if (!proxyAttachesNonInternalNetwork(p, svc)) continue;
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY_EXPOSURE',
+					service: name,
+					message: `Socket proxy "${name}" is on a network that is not marked internal: true, which widens who can reach the proxied Docker API`,
+					hint: 'Attach the proxy only to internal: true compose networks used by trusted dependents.',
+					line: p.lineOf(['services', name, 'networks']) ?? p.lineOf(['services', name])
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'DOCKER_SOCKET_PROXY_CLIENT',
+		description: 'A service reaches Docker through a socket proxy instead of mounting the socket',
+		group: 'security',
+		defaultSeverity: 'info',
+		check(p) {
+			const proxyEntries = Object.entries(services(p)).filter(([n, s]) => isSocketProxyService(n, s));
+			if (proxyEntries.length === 0) return [];
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				if (mountsDockerSocket(svc)) continue; // it mounts directly - not a proxy client
+				const hosts = new Set(dockerEndpointHosts(svc));
+				if (hosts.size === 0) continue;
+				const svcNets = serviceNetworkKeys(svc);
+				const isClient = proxyEntries.some(([pn, ps]) => {
+					const reach = proxyReachableNames(pn, ps);
+					if (!reach.some((r) => hosts.has(r))) return false;
+					const proxyNets = serviceNetworkKeys(ps);
+					// Empty membership on either side = implicit default; match only if BOTH default.
+					if (svcNets.length === 0 || proxyNets.length === 0) return svcNets.length === 0 && proxyNets.length === 0;
+					return svcNets.some((n) => proxyNets.includes(n));
+				});
+				if (!isClient) continue;
+				out.push({
+					ruleId: 'DOCKER_SOCKET_PROXY_CLIENT',
+					service: name,
+					message: `"${name}" reaches Docker through a socket proxy instead of mounting docker.sock directly - the safer pattern`,
+					line: p.lineOf(['services', name])
+				});
 			}
 			return out;
 		}
@@ -724,6 +1036,96 @@ export const RULES: RuleDefinition[] = [
 					line: svcLine,
 					fix,
 					fixDescription: 'Add restart: unless-stopped'
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'SENSITIVE_SERVICE_BROAD_EXPOSURE',
+		description: 'An admin/management UI publishes a port on all interfaces',
+		group: 'security',
+		defaultSeverity: 'error',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				const image = typeof svc.image === 'string' ? svc.image : '';
+				if (!ADMIN_PANEL_IMAGE.test(image)) continue;
+				for (let i = 0; i < ports(svc).length; i++) {
+					const parsed = parsePortEntry(ports(svc)[i]);
+					if (parsed?.hostPort && (!parsed.hostIp || parsed.hostIp === '0.0.0.0')) {
+						out.push({
+							ruleId: 'SENSITIVE_SERVICE_BROAD_EXPOSURE',
+							service: name,
+							message: `Admin UI "${name}" publishes port ${parsed.hostPort} on all interfaces - reachable from the whole network`,
+							hint: 'Bind to 127.0.0.1 and reach it through a reverse proxy with auth, or drop the host mapping.',
+							line: p.lineOf(['services', name, 'ports', i]) ?? p.lineOf(['services', name])
+						});
+					}
+				}
+			}
+			return out;
+		}
+	},
+	{
+		id: 'ANONYMOUS_VOLUME',
+		description: 'A service uses an anonymous volume (data has no stable name and is easy to lose)',
+		group: 'reliability',
+		defaultSeverity: 'info',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				const vols = Array.isArray(svc.volumes) ? svc.volumes : [];
+				for (let i = 0; i < vols.length; i++) {
+					const v = vols[i];
+					// Anonymous = a container path with no source. Short form: a single
+					// segment ("/data"), i.e. no ':' mapping. Long form: type volume with
+					// no `source`. A bind (./x, /x:/y) or named volume (data:/x) has a
+					// source and is NOT anonymous.
+					let anon = false;
+					if (typeof v === 'string') {
+						anon = !v.includes(':');
+					} else {
+						const o = asRecord(v);
+						if (o && (o.type === 'volume' || o.type === undefined) && !o.source) anon = true;
+					}
+					if (anon) {
+						out.push({
+							ruleId: 'ANONYMOUS_VOLUME',
+							service: name,
+							message: `"${name}" uses an anonymous volume - its data has no stable name and is orphaned when the container is recreated`,
+							hint: 'Give it a named volume (name:/path) or a bind mount so the data is findable and portable.',
+							line: p.lineOf(['services', name, 'volumes', i]) ?? p.lineOf(['services', name])
+						});
+					}
+				}
+			}
+			return out;
+		}
+	},
+	{
+		id: 'SWARM_ONLY_DEPLOY_KEYS',
+		description: 'deploy.* keys that standalone docker compose silently ignores',
+		group: 'reliability',
+		defaultSeverity: 'warn',
+		check(p) {
+			// Keys under `deploy:` that ONLY take effect in Swarm mode; `docker
+			// compose up` ignores them without warning. Deliberately conservative:
+			// deploy.replicas, deploy.mode and deploy.resources ARE partially honored
+			// by Compose v2, so they are NOT flagged.
+			const SWARM_ONLY = ['placement', 'update_config', 'rollback_config', 'endpoint_mode'];
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				const deploy = asRecord(svc.deploy);
+				if (!deploy) continue;
+				const present = SWARM_ONLY.filter((k) => k in deploy);
+				if (present.length === 0) continue;
+				out.push({
+					ruleId: 'SWARM_ONLY_DEPLOY_KEYS',
+					service: name,
+					message: `"${name}" sets deploy.${present.join(', deploy.')} - standalone docker compose ignores these (they only apply in Swarm mode)`,
+					hint: 'Use top-level equivalents (e.g. cpus:/mem_limit:, or scale via the CLI) unless you deploy to Swarm.',
+					line: p.lineOf(['services', name, 'deploy']) ?? p.lineOf(['services', name])
 				});
 			}
 			return out;

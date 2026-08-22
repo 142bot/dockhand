@@ -441,8 +441,182 @@ describe('review regressions (found by the final audit)', () => {
 		const f = find(`services:\n  a:\n    image: x\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:z,ro\n`, 'DOCKER_SOCKET_MOUNT');
 		expect(f?.severity).toBe('warn');
 	});
+	test('DOCKER_SOCKET_MOUNT: catches the /run/docker.sock path (no /var)', () => {
+		const f = find(`services:\n  a:\n    image: x\n    volumes:\n      - /run/docker.sock:/run/docker.sock\n`, 'DOCKER_SOCKET_MOUNT');
+		expect(f?.severity).toBe('error');
+	});
+	test('DOCKER_SOCKET_MOUNT: Dockhand itself gets an info note, not error', () => {
+		for (const img of ['fnsys/dockhand', 'finsys/dockhand:v1.0.44', 'registry.bor6.pl/dockhand:abc123']) {
+			const f = find(`services:\n  dh:\n    image: ${img}\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n`, 'DOCKER_SOCKET_MOUNT');
+			expect(f?.severity).toBe('info');
+			expect(f?.message).toContain('required');
+		}
+	});
+	test('DOCKER_SOCKET_MOUNT: a non-Dockhand image with rw socket stays error', () => {
+		const f = find(`services:\n  watchtower:\n    image: containrrr/watchtower\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n`, 'DOCKER_SOCKET_MOUNT');
+		expect(f?.severity).toBe('error');
+	});
+});
+
+describe('Docker socket proxy classifier (#1791)', () => {
+	// A known proxy image is classified on its own, ro socket + limited flags.
+	const proxyStack = (extra = '') =>
+		`services:\n` +
+		`  socket-proxy:\n` +
+		`    image: tecnativa/docker-socket-proxy\n` +
+		`    volumes:\n` +
+		`      - /var/run/docker.sock:/var/run/docker.sock:ro\n` +
+		`    environment:\n` +
+		`      - CONTAINERS=1\n` +
+		extra;
+
+	test('a recognised proxy image => DOCKER_SOCKET_PROXY info, NOT a socket-mount error', () => {
+		const r = runValidate(proxyStack());
+		const proxy = r.findings.find((f) => f.ruleId === 'DOCKER_SOCKET_PROXY');
+		expect(proxy?.severity).toBe('info');
+		// the generic direct-mount rule must NOT fire for the proxy
+		expect(r.findings.some((f) => f.ruleId === 'DOCKER_SOCKET_MOUNT')).toBe(false);
+	});
+
+	test('detection ladder: proxy-shaped NAME needs ro-socket OR a flag', () => {
+		// name hint + ro socket, no flags => classified
+		const nameRo = `services:\n  my-socket-proxy:\n    image: someorg/thing\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n`;
+		expect(ids(nameRo)).toContain('DOCKER_SOCKET_PROXY');
+		// no name hint, rw socket, one flag => NOT enough (needs ro+2 flags) => stays a direct mount
+		const weak = `services:\n  thing:\n    image: someorg/thing\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n    environment:\n      - CONTAINERS=1\n`;
+		expect(ids(weak)).not.toContain('DOCKER_SOCKET_PROXY');
+		expect(ids(weak)).toContain('DOCKER_SOCKET_MOUNT');
+	});
+
+	test('detection ladder: no name/image hint needs ro socket AND >=2 flags', () => {
+		const twoFlags = `services:\n  x:\n    image: someorg/thing\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n    environment:\n      - CONTAINERS=1\n      - IMAGES=1\n`;
+		expect(ids(twoFlags)).toContain('DOCKER_SOCKET_PROXY');
+	});
+
+	test('DOCKER_SOCKET_PROXY_WRITABLE: proxy with rw socket is an error', () => {
+		const rw = `services:\n  socket-proxy:\n    image: tecnativa/docker-socket-proxy\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n    environment:\n      - CONTAINERS=1\n`;
+		const f = find(rw, 'DOCKER_SOCKET_PROXY_WRITABLE');
+		expect(f?.severity).toBe('error');
+	});
+
+	test('DOCKER_SOCKET_PROXY_PUBLISHED: proxy publishing a host port is an error', () => {
+		const f = find(proxyStack(`    ports:\n      - "2375:2375"\n`), 'DOCKER_SOCKET_PROXY_PUBLISHED');
+		expect(f?.severity).toBe('error');
+	});
+
+	test('DOCKER_SOCKET_PROXY_MUTATING: POST/DELETE=1 is a warning', () => {
+		const f = find(proxyStack(`      - POST=1\n      - DELETE=1\n`), 'DOCKER_SOCKET_PROXY_MUTATING');
+		expect(f?.severity).toBe('warn');
+		expect(f?.message).toContain('POST');
+		expect(f?.message).toContain('DELETE');
+	});
+
+	test('DOCKER_SOCKET_PROXY_EXPOSURE: proxy on a non-internal network warns', () => {
+		const nonInternal =
+			`services:\n  socket-proxy:\n    image: tecnativa/docker-socket-proxy\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n    environment:\n      - CONTAINERS=1\n    networks:\n      - frontend\n` +
+			`networks:\n  frontend: {}\n`;
+		expect(ids(nonInternal)).toContain('DOCKER_SOCKET_PROXY_EXPOSURE');
+		// internal: true silences it
+		const internal =
+			`services:\n  socket-proxy:\n    image: tecnativa/docker-socket-proxy\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n    environment:\n      - CONTAINERS=1\n    networks:\n      - dockerapi\n` +
+			`networks:\n  dockerapi:\n    internal: true\n`;
+		expect(ids(internal)).not.toContain('DOCKER_SOCKET_PROXY_EXPOSURE');
+	});
+
+	test('DOCKER_SOCKET_PROXY_CLIENT: a service using the proxy via DOCKER_HOST on a shared net', () => {
+		const src =
+			`services:\n` +
+			`  socket-proxy:\n    image: tecnativa/docker-socket-proxy\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n    environment:\n      - CONTAINERS=1\n    networks:\n      - dockerapi\n` +
+			`  app:\n    image: someorg/app\n    environment:\n      - DOCKER_HOST=tcp://socket-proxy:2375\n    networks:\n      - dockerapi\n` +
+			`networks:\n  dockerapi:\n    internal: true\n`;
+		const f = find(src, 'DOCKER_SOCKET_PROXY_CLIENT');
+		expect(f?.service).toBe('app');
+		expect(f?.severity).toBe('info');
+	});
+
+	test('a proxy in the stack retargets a direct-mounter remediation', () => {
+		const src =
+			`services:\n` +
+			`  socket-proxy:\n    image: tecnativa/docker-socket-proxy\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n    environment:\n      - CONTAINERS=1\n` +
+			`  bad:\n    image: someorg/bad\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n`;
+		const f = find(src, 'DOCKER_SOCKET_MOUNT');
+		expect(f?.service).toBe('bad');
+		expect(f?.hint).toContain('already runs a socket proxy');
+	});
 	test('WRITABLE_ROOT_MOUNT: rw with a label (:z only) stays error', () => {
 		const f = find(`services:\n  a:\n    image: x\n    volumes:\n      - /etc:/host-etc:z\n`, 'WRITABLE_ROOT_MOUNT');
 		expect(f?.severity).toBe('error');
+	});
+});
+
+describe('SENSITIVE_SERVICE_BROAD_EXPOSURE', () => {
+	test('an admin panel published on 0.0.0.0 is an error', () => {
+		const f = find(`services:\n  ui:\n    image: adminer\n    ports:\n      - "8080:8080"\n`, 'SENSITIVE_SERVICE_BROAD_EXPOSURE');
+		expect(f?.severity).toBe('error');
+		expect(f?.line).toBe(5); // the ports entry
+	});
+	test('portainer and pgadmin variants are recognised', () => {
+		expect(ids(`services:\n  p:\n    image: portainer/portainer-ce:latest\n    ports:\n      - "9000:9000"\n`))
+			.toContain('SENSITIVE_SERVICE_BROAD_EXPOSURE');
+		expect(ids(`services:\n  p:\n    image: dpage/pgadmin4\n    ports:\n      - "80:80"\n`))
+			.toContain('SENSITIVE_SERVICE_BROAD_EXPOSURE');
+	});
+	test('bound to 127.0.0.1 is fine', () => {
+		expect(ids(`services:\n  ui:\n    image: adminer\n    ports:\n      - "127.0.0.1:8080:8080"\n`))
+			.not.toContain('SENSITIVE_SERVICE_BROAD_EXPOSURE');
+	});
+	test('a plain database does NOT trip this rule (that is DB_PORT_ON_ALL_INTERFACES)', () => {
+		const found = ids(`services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n`);
+		expect(found).not.toContain('SENSITIVE_SERVICE_BROAD_EXPOSURE');
+		expect(found).toContain('DB_PORT_ON_ALL_INTERFACES');
+	});
+	test('admin UI with no published port is not flagged', () => {
+		expect(ids(`services:\n  ui:\n    image: adminer\n`)).not.toContain('SENSITIVE_SERVICE_BROAD_EXPOSURE');
+	});
+});
+
+describe('ANONYMOUS_VOLUME', () => {
+	test('a short-form container path with no source is anonymous (info)', () => {
+		const f = find(`services:\n  a:\n    image: x\n    volumes:\n      - /var/lib/data\n`, 'ANONYMOUS_VOLUME');
+		expect(f?.severity).toBe('info');
+		expect(f?.line).toBe(5);
+	});
+	test('long-form volume with no source is anonymous', () => {
+		const src = `services:\n  a:\n    image: x\n    volumes:\n      - type: volume\n        target: /data\n`;
+		expect(ids(src)).toContain('ANONYMOUS_VOLUME');
+	});
+	test('a named volume is NOT anonymous', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - data:/var/lib/data\n`))
+			.not.toContain('ANONYMOUS_VOLUME');
+	});
+	test('a bind mount is NOT anonymous', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - ./data:/var/lib/data\n`))
+			.not.toContain('ANONYMOUS_VOLUME');
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - type: bind\n        source: ./data\n        target: /data\n`))
+			.not.toContain('ANONYMOUS_VOLUME');
+	});
+	test('a tmpfs long-form is NOT anonymous (no persistent data)', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - type: tmpfs\n        target: /tmp\n`))
+			.not.toContain('ANONYMOUS_VOLUME');
+	});
+});
+
+describe('SWARM_ONLY_DEPLOY_KEYS', () => {
+	test('deploy.placement is flagged (warn)', () => {
+		const f = find(`services:\n  a:\n    image: x\n    deploy:\n      placement:\n        constraints: [node.role == manager]\n`, 'SWARM_ONLY_DEPLOY_KEYS');
+		expect(f?.severity).toBe('warn');
+		expect(f?.line).toBe(4); // the deploy: line
+	});
+	test('multiple swarm-only keys are listed in one finding', () => {
+		const f = find(`services:\n  a:\n    image: x\n    deploy:\n      update_config:\n        parallelism: 2\n      rollback_config:\n        parallelism: 1\n`, 'SWARM_ONLY_DEPLOY_KEYS');
+		expect(f?.message).toContain('update_config');
+		expect(f?.message).toContain('rollback_config');
+	});
+	test('deploy.replicas / resources are NOT flagged (Compose honors them)', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    deploy:\n      replicas: 3\n      resources:\n        limits:\n          cpus: "0.5"\n`))
+			.not.toContain('SWARM_ONLY_DEPLOY_KEYS');
+	});
+	test('no deploy block, no finding', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    restart: always\n`)).not.toContain('SWARM_ONLY_DEPLOY_KEYS');
 	});
 });
