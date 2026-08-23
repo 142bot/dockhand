@@ -6,6 +6,10 @@
     "changes": [
       {
         "type": "feature",
+        "text": "generate a compose file from any container - save as new or append to existing stack (#489)"
+      },
+      {
+        "type": "feature",
         "text": "MQTT notification channel - publish events to a broker (#280)"
       },
       {
