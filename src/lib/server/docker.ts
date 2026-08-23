@@ -15,6 +15,7 @@ import * as tls from 'node:tls';
 import { createHash } from 'node:crypto';
 import { pumpWebStreamToWritable } from './stream-pump';
 import { toWebReadableStream } from './node-readable-stream';
+import { buildImagePruneFilters } from './image-prune-core';
 import { computeRequestTimeoutMs } from './backups/request-timeout';
 import { helperWaitDeadline } from './helper-wait-core';
 import type { Environment } from './db';
@@ -4605,19 +4606,21 @@ export async function pruneImages(dangling = true, envId?: number | null) {
 	// scanner images are always tagged so they can't be dangling anyway.
 	if (dangling) {
 		return dockerJsonRequest(
-			`/images/prune?filters=${encodeURIComponent('{"dangling":["true"]}')}`,
+			`/images/prune?filters=${buildImagePruneFilters(true)}`,
 			{ method: 'POST' },
 			envId
 		);
 	}
 
-	// dangling=false: "prune all unused." When the scanner-protection setting
-	// is on, shield grype + trivy with stopped holder containers (Docker's
-	// "in use" check keeps them) then tear them down in a finally (#625).
+	// dangling=false: "prune all unused." The label filter makes Docker skip any
+	// image tagged dockhand.prune=false (#1391). When the scanner-protection
+	// setting is on, ALSO shield grype + trivy + backup helper with stopped
+	// holder containers (Docker's "in use" check keeps them) then tear them down
+	// in a finally (#625). Scanner images are third-party so we can't label them.
 	const protect = (await getSetting('protect_scanner_images')) !== false;
 	if (!protect) {
 		return dockerJsonRequest(
-			`/images/prune?filters=${encodeURIComponent('{"dangling":["false"]}')}`,
+			`/images/prune?filters=${buildImagePruneFilters(false)}`,
 			{ method: 'POST' },
 			envId
 		);
@@ -4652,7 +4655,7 @@ export async function pruneImages(dangling = true, envId?: number | null) {
 
 	try {
 		return await dockerJsonRequest(
-			`/images/prune?filters=${encodeURIComponent('{"dangling":["false"]}')}`,
+			`/images/prune?filters=${buildImagePruneFilters(false)}`,
 			{ method: 'POST' },
 			envId
 		);
