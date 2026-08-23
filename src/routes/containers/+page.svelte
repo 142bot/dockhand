@@ -12,6 +12,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
+	import ContainerIcon from '$lib/components/ContainerIcon.svelte';
 	import { formatPorts, formatExposedPorts } from '$lib/utils/port-format';
 	import { formatBytes, formatBytesCompact } from '$lib/utils/format';
 	import MultiSelectFilter from '$lib/components/MultiSelectFilter.svelte';
@@ -90,7 +91,7 @@
 	import { appSettings } from '$lib/stores/settings';
 	import { canAccess } from '$lib/stores/auth';
 	import { vulnerabilityCriteriaIcons } from '$lib/utils/update-steps';
-	import { ipToNumber } from '$lib/utils/ip';
+	import { compareIps } from '$lib/utils/ip';
 	import { formatHostPortUrl } from '$lib/utils/url';
 	import { parseCustomUrl } from '$lib/utils/custom-url';
 	import { extractTraefikUrls } from '$lib/utils/traefik-urls';
@@ -110,6 +111,16 @@
 
 	// Data from persistent store (survives page navigation)
 	const containers = $derived($containerStore.data);
+	// User-set per-container icon overrides for the current env (name -> icon), batch-loaded.
+	let iconOverrides = $state<Record<string, string>>({});
+	async function loadIconOverrides(forEnvId: number | null) {
+		try {
+			const res = await fetch(appendEnvParam('/api/container-icons', forEnvId));
+			iconOverrides = res.ok ? await res.json() : {};
+		} catch {
+			iconOverrides = {};
+		}
+	}
 	const containerStats = $derived($containerStore.stats);
 	const autoUpdateSettings = $derived($containerStore.autoUpdateSettings);
 	const envHasScanning = $derived($containerStore.envHasScanning);
@@ -215,11 +226,13 @@
 			}
 			// Refresh data (store handles loading state internally)
 			containerStore.refresh(newEnvId);
+			loadIconOverrides(newEnvId);
 		} else if (!env) {
 			// No environment - clear data and stop loading
 			envId = null;
 			shellDetectionCache = {};
 			containerStore.clear();
+			iconOverrides = {};
 		}
 	});
 	let showCreateModal = $state(false);
@@ -235,6 +248,7 @@
 	let showFileBrowserModal = $state(false);
 	let fileBrowserContainerId = $state('');
 	let fileBrowserContainerName = $state('');
+	let fileBrowserContainerImage = $state('');
 
 	// Terminal state - track active terminals per container
 	interface ActiveTerminal {
@@ -271,6 +285,9 @@
 	// Update confirmation
 	let confirmUpdateAll = $state(false);
 	let confirmUpdateId = $state<string | null>(null);
+	// Separate open-state for the update icon in the image column so it does not
+	// share a popover with the identical icon in the actions column (#1435).
+	let confirmImageUpdateId = $state<string | null>(null);
 	let confirmUpdateSelected = $state(false);
 
 	// Update check state
@@ -833,7 +850,7 @@
 				case 'ip':
 					const ipA = getContainerIp(a.networks);
 					const ipB = getContainerIp(b.networks);
-					cmp = ipToNumber(ipA) - ipToNumber(ipB);
+					cmp = compareIps(ipA, ipB);
 					break;
 				case 'cpu':
 					const cpuA = containerStats.get(a.id)?.cpuPercent ?? -1;
@@ -1171,6 +1188,7 @@
 	function browseFiles(container: ContainerInfo) {
 		fileBrowserContainerId = container.id;
 		fileBrowserContainerName = container.name;
+		fileBrowserContainerImage = container.image;
 		showFileBrowserModal = true;
 	}
 
@@ -1723,6 +1741,7 @@
 					{@const stack = getComposeProject(container.labels)}
 					{#if column.id === 'name'}
 						<div class="flex items-center gap-1.5 min-w-0">
+							<ContainerIcon image={container.image} name={container.name} override={iconOverrides[container.name]} {envId} class="w-4 h-4" />
 							<button
 								type="button"
 								class="text-xs font-medium truncate text-left hover:text-primary hover:underline cursor-pointer"
@@ -1794,9 +1813,29 @@
 					{:else if column.id === 'image'}
 						<div class="flex items-center gap-1.5 {$appSettings.highlightUpdates && containersWithUpdatesSet.has(container.id) ? 'update-border' : ''}">
 							{#if containersWithUpdatesSet.has(container.id)}
-								<span title="Update available">
-									<CircleArrowUp class="w-3 h-3 text-amber-500 {$appSettings.highlightUpdates ? 'glow-amber' : ''} shrink-0" />
-								</span>
+								{#if container.systemContainer}
+									<!-- System containers cannot be updated from the UI - show the
+									     indicator but leave it non-clickable (matches the actions column). -->
+									<span title="Update available">
+										<CircleArrowUp class="w-3 h-3 text-amber-500 {$appSettings.highlightUpdates ? 'glow-amber' : ''} shrink-0" />
+									</span>
+								{:else}
+									<ConfirmPopover
+										open={confirmImageUpdateId === container.id}
+										action="Update"
+										itemType="container"
+										itemName={container.name}
+										title="Update available - click to update"
+										onConfirm={() => updateSingleContainer(container.id, container.name)}
+										onOpenChange={(open) => confirmImageUpdateId = open ? container.id : null}
+									>
+										{#snippet children({ open })}
+											<span title="Update available" class="cursor-pointer">
+												<CircleArrowUp class="w-3 h-3 text-amber-500 hover:text-amber-400 transition-colors {$appSettings.highlightUpdates ? 'glow-amber' : ''} shrink-0" />
+											</span>
+										{/snippet}
+									</ConfirmPopover>
+								{/if}
 								{#if $appSettings.showImageChangelogLinks}
 									{@const changelogUrl = resolveChangelogUrl(container.image, container.labels)}
 									{#if changelogUrl}
@@ -2462,6 +2501,7 @@
 	containerId={editContainerId}
 	onClose={() => (showEditModal = false)}
 	onSuccess={fetchContainers}
+	onIconChanged={() => loadIconOverrides(envId)}
 />
 
 <ContainerInspectModal
@@ -2485,6 +2525,7 @@
 	bind:open={showFileBrowserModal}
 	containerId={fileBrowserContainerId}
 	containerName={fileBrowserContainerName}
+	containerImage={fileBrowserContainerImage}
 	envId={envId ?? undefined}
 	onclose={() => showFileBrowserModal = false}
 />

@@ -20,6 +20,7 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 	import type { ContainerInfo } from '$lib/types';
 	import { currentEnvironment, environments, appendEnvParam } from '$lib/stores/environment';
 	import { appSettings, formatLogTimestamps } from '$lib/stores/settings';
+	import ContainerIcon from '$lib/components/ContainerIcon.svelte';
 	import { NoEnvironment } from '$lib/components/ui/empty-state';
 	import { parseLines, renderLineHtml, sortByTimestampStable, type LogEntry } from '$lib/utils/log-entry';
 
@@ -1644,7 +1645,7 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 									onclick={() => selectContainer(container)}
 									class="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2 {isCurrentSelection ? 'bg-muted' : ''}"
 								>
-									<Box class="w-3.5 h-3.5 shrink-0 {container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'}" />
+									<ContainerIcon image={container.image} name={container.name} class="w-3.5 h-3.5" fallbackClass={container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'} showFallbackWhenOff />
 									<span class="font-medium truncate">{container.name}</span>
 									<span class="text-muted-foreground text-xs truncate">({container.image})</span>
 									{#if isCurrentSelection}
@@ -1780,7 +1781,7 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 											{/if}
 										</button>
 										<GripVertical class="w-3 h-3 shrink-0 text-muted-foreground/50 cursor-grab active:cursor-grabbing" />
-										<Box class="w-3 h-3 shrink-0 {container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'}" />
+										<ContainerIcon image={container.image} name={container.name} class="w-3 h-3" fallbackClass={container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'} showFallbackWhenOff />
 										<div class="flex-1 min-w-0">
 											<div class="font-medium truncate text-xs leading-tight">{container.name}</div>
 											<div class="text-2xs text-muted-foreground truncate leading-tight">{container.image}</div>
@@ -1823,7 +1824,7 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 												<div class="w-3.5 h-3.5 rounded border-2 border-muted-foreground/30"></div>
 											{/if}
 										</div>
-										<Box class="w-3 h-3 shrink-0 {container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'}" />
+										<ContainerIcon image={container.image} name={container.name} class="w-3 h-3" fallbackClass={container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'} showFallbackWhenOff />
 										<div class="flex-1 min-w-0">
 											<div class="font-medium truncate text-xs leading-tight">{container.name}</div>
 											<div class="text-2xs text-muted-foreground truncate leading-tight">{container.image}</div>
@@ -1885,7 +1886,7 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 											{/if}
 										</button>
 									{/if}
-									<Box class="w-3 h-3 shrink-0 {container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'}" />
+									<ContainerIcon image={container.image} name={container.name} class="w-3 h-3" fallbackClass={container.state === 'running' ? 'text-green-500' : 'text-muted-foreground'} showFallbackWhenOff />
 									<div class="flex-1 min-w-0">
 										<div class="font-medium truncate text-xs leading-tight">{container.name}</div>
 										<div class="text-2xs text-muted-foreground truncate leading-tight">{container.image}</div>

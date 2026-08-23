@@ -36,6 +36,9 @@
       "name": "config-sets"
     },
     {
+      "name": "container-icons"
+    },
+    {
       "name": "containers"
     },
     {
@@ -67,6 +70,9 @@
     },
     {
       "name": "host"
+    },
+    {
+      "name": "icons"
     },
     {
       "name": "images"
@@ -3595,6 +3601,12 @@
                   "hostPath": {
                     "type": "string"
                   },
+                  "cacert": {
+                    "type": "string"
+                  },
+                  "tlsClientCert": {
+                    "type": "string"
+                  },
                   "policies": {
                     "type": "string"
                   }
@@ -3725,6 +3737,12 @@
                     "type": "string"
                   },
                   "hostPath": {
+                    "type": "string"
+                  },
+                  "cacert": {
+                    "type": "string"
+                  },
+                  "tlsClientCert": {
                     "type": "string"
                   },
                   "policies": {
@@ -4103,6 +4121,12 @@
                   "envVars": {
                     "type": "object",
                     "properties": {}
+                  },
+                  "cacert": {
+                    "type": "string"
+                  },
+                  "tlsClientCert": {
+                    "type": "string"
                   }
                 }
               },
@@ -5965,6 +5989,244 @@
           },
           "500": {
             "description": "Failed to delete config set"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/container-icons": {
+      "get": {
+        "operationId": "get_api_container-icons",
+        "tags": [
+          "container-icons"
+        ],
+        "summary": "List all container icon overrides for an environment as a name -> icon map",
+        "parameters": [
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A JSON object mapping container name to its icon value (lucide name, `selfhst:<ref>`, or `custom:container`)"
+          },
+          "403": {
+            "description": "Permission denied (needs containers:view)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Returns every container that has a user-set icon override in the given environment, so the containers list can render them in one request instead of one lookup per row."
+      }
+    },
+    "/api/container-icons/{name}": {
+      "get": {
+        "operationId": "get_api_container-icons_name",
+        "tags": [
+          "container-icons"
+        ],
+        "summary": "Get a container's uploaded custom icon (raw image/webp bytes, not JSON)",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Container name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the container belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Binary image/webp response body, Cache-Control public max-age=3600"
+          },
+          "403": {
+            "description": "Permission denied (needs containers:view)"
+          },
+          "404": {
+            "description": "No custom icon set for this container"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "post_api_container-icons_name",
+        "tags": [
+          "container-icons"
+        ],
+        "summary": "Set a container's icon override - either a name reference or an uploaded image",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Container name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the container belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "icon": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "icon"
+                  ]
+                },
+                "example": {
+                  "success": true,
+                  "icon": "selfhst:plex"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither icon nor image supplied, or image exceeds the size limit"
+          },
+          "403": {
+            "description": "Permission denied (needs containers:edit)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Body carries EITHER `icon` (a lucide name or `selfhst:<ref>`) to set a referenced icon, OR `image` (a base64-encoded data URL, ~300KB limit) to upload a custom one (stored as `custom:container`). One of the two is required. The override is keyed by container name + environment, so it survives container recreation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "icon": {
+                    "type": "string"
+                  },
+                  "image": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "icon": "string",
+                "image": "string"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_api_container-icons_name",
+        "tags": [
+          "container-icons"
+        ],
+        "summary": "Remove a container's icon override (fall back to automatic matching)",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Container name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the container belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied (needs containers:edit)"
           }
         },
         "security": [
@@ -15139,6 +15401,73 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/api/icons/selfhst/{ref}": {
+      "get": {
+        "operationId": "get_api_icons_selfhst_ref",
+        "tags": [
+          "icons"
+        ],
+        "summary": "Get a selfh.st app icon (raw SVG), fetched once from the CDN and cached on disk",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "selfh.st icon Reference (lowercase letters, digits, hyphens), e.g. \"plex\""
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw image/svg+xml body, Cache-Control public max-age=604800"
+          },
+          "400": {
+            "description": "The ref is not a valid selfh.st reference"
+          },
+          "404": {
+            "description": "No such icon (invalid ref or upstream fetch failed)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Proxies an icon from the selfh.st collection so the browser never contacts an external CDN directly. The first request for a given ref fetches the SVG from jsdelivr and caches it under DATA_DIR; later requests are served locally. Icons are CC BY 4.0 (selfh.st). Returns 404 if the ref is invalid or the icon can't be fetched, so the UI falls back to a generic icon."
+      }
+    },
+    "/api/icons/selfhst-manifest": {
+      "get": {
+        "operationId": "get_api_icons_selfhst-manifest",
+        "tags": [
+          "icons"
+        ],
+        "summary": "Get the selfh.st icon manifest (index.json), cached on disk with a 7-day TTL",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The raw selfh.st index.json array (application/json)"
+          },
+          "503": {
+            "description": "The manifest is unavailable (never cached and the upstream fetch failed)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Returns the selfh.st collection manifest (~2880 entries with Name, Reference, format flags, Category, Tags) so the icon picker can search it. Fetched once from the CDN and cached under DATA_DIR. Returns 503 only if it has never been fetched and the fetch fails."
       }
     },
     "/api/images": {
@@ -24446,7 +24775,7 @@
         "tags": [
           "stacks"
         ],
-        "summary": "Get a stack's env vars (non-secrets from file, secrets masked from DB) plus injected provider keys",
+        "summary": "Get a stack's env vars plus injected provider keys",
         "parameters": [
           {
             "name": "name",
@@ -24478,7 +24807,23 @@
                     "variables": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          },
+                          "isSecret": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "value",
+                          "isSecret"
+                        ]
                       }
                     },
                     "injectedSecretKeys": {
@@ -24497,7 +24842,11 @@
                 },
                 "example": {
                   "variables": [
-                    "string"
+                    {
+                      "key": "string",
+                      "value": "string",
+                      "isSecret": true
+                    }
                   ],
                   "injectedSecretKeys": [
                     "string"
@@ -24521,14 +24870,15 @@
           {
             "bearerAuth": []
           }
-        ]
+        ],
+        "description": "The source of `variables` depends on the stack type. For a GIT stack, ALL variables (secret and non-secret) come from the database via this endpoint - the DB is the canonical store the UI, `POST /env/validate`, and deploys read. For an INTERNAL/adopted stack, non-secrets come from the on-disk `.env` file (written via `PUT /env/raw`) and only secrets come from the DB. Secret values are masked as `***` and never returned in plaintext. Each variable is `{ key, value, isSecret }`."
       },
       "put": {
         "operationId": "put_api_stacks_name_env",
         "tags": [
           "stacks"
         ],
-        "summary": "Save a stack's secret env vars to the DB (secrets never hit disk)",
+        "summary": "Save a stack's env vars to the DB",
         "parameters": [
           {
             "name": "name",
@@ -24571,6 +24921,7 @@
             "bearerAuth": []
           }
         ],
+        "description": "Persists EVERY variable in the body to the database (secrets and non-secrets alike). For a GIT stack this is the canonical store - non-secret overrides and secrets both belong here, NOT in the `.env` file. For an INTERNAL/adopted stack the DB is used for secrets while non-secrets are expected in the `.env` file (written via `PUT /env/raw`); posting a non-secret here still saves it but the file remains the source the UI reads for that type. A masked secret value of `***` is left unchanged (the stored value is preserved). Each item is `{ key, value, isSecret? }`; a request whose `variables` are not such objects is rejected with 400.",
         "requestBody": {
           "required": true,
           "content": {
@@ -24581,7 +24932,22 @@
                   "variables": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "isSecret": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "value"
+                      ]
                     }
                   }
                 },
@@ -24591,7 +24957,16 @@
               },
               "example": {
                 "variables": [
-                  "string"
+                  {
+                    "key": "DB_HOST",
+                    "value": "db",
+                    "isSecret": false
+                  },
+                  {
+                    "key": "DB_PASSWORD",
+                    "value": "s3cret",
+                    "isSecret": true
+                  }
                 ]
               }
             }
@@ -24900,6 +25275,207 @@
             }
           }
         }
+      }
+    },
+    "/api/stacks/{name}/icon": {
+      "get": {
+        "operationId": "get_api_stacks_name_icon",
+        "tags": [
+          "stacks"
+        ],
+        "summary": "Get a stack's uploaded custom icon (raw image/webp bytes, not JSON)",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stack name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the stack belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Binary image/webp response body, Cache-Control public max-age=3600"
+          },
+          "403": {
+            "description": "Permission denied (needs stacks:view)"
+          },
+          "404": {
+            "description": "No custom icon set for this stack"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "post_api_stacks_name_icon",
+        "tags": [
+          "stacks"
+        ],
+        "summary": "Set a stack's icon - either a name reference or an uploaded image",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stack name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the stack belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "icon": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "icon"
+                  ]
+                },
+                "example": {
+                  "success": true,
+                  "icon": "selfhst:plex"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither icon nor image supplied, or image exceeds the size limit"
+          },
+          "403": {
+            "description": "Permission denied (needs stacks:edit)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Body carries EITHER `icon` (a lucide name or `selfhst:<ref>`) to set a referenced icon, OR `image` (a base64-encoded data URL, ~300KB limit) to upload a custom one (stored as `custom:stack`). One of the two is required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "icon": {
+                    "type": "string"
+                  },
+                  "image": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "icon": "string",
+                "image": "string"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_api_stacks_name_icon",
+        "tags": [
+          "stacks"
+        ],
+        "summary": "Remove a stack's custom icon",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stack name"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Environment id the stack belongs to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                },
+                "example": {
+                  "success": true
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied (needs stacks:edit)"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/stacks/{name}/relocate": {

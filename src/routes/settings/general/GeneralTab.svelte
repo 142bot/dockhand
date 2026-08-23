@@ -31,6 +31,7 @@
 	let showGitCommitHash = $derived($appSettings.showGitCommitHash);
 	let honorProxyLabels = $derived($appSettings.honorProxyLabels);
 	let showImageChangelogLinks = $derived($appSettings.showImageChangelogLinks);
+	let useSelfhstIcons = $derived($appSettings.useSelfhstIcons);
 	let showWhatsNew = $derived($appSettings.showWhatsNew);
 	let timeFormat = $derived($appSettings.timeFormat);
 	let dateFormat = $derived($appSettings.dateFormat);
@@ -410,6 +411,28 @@ services:
 									/>
 								</div>
 								<p class="text-xs text-muted-foreground">Show a release-notes icon next to images with updates available</p>
+							</div>
+							<div class="space-y-1">
+								<div class="flex items-center gap-3">
+									<Label>Use selfh.st icons</Label>
+									<Tooltip.Root>
+										<Tooltip.Trigger>
+											<HelpCircle class="w-3.5 h-3.5 text-muted-foreground" />
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top" class="w-96 max-w-[90vw]">
+											<p>Show app logos from <a href="https://selfh.st" target="_blank" rel="noopener" class="underline">selfh.st</a> as container icons, matched automatically from the image name. Logos are fetched once and cached locally, so your browser never contacts an external CDN. Off by default. Logos are CC BY 4.0; product names and trademarks are the property of their respective owners and are shown for identification only, without implying endorsement.</p>
+										</Tooltip.Content>
+									</Tooltip.Root>
+									<TogglePill
+										checked={useSelfhstIcons}
+										onchange={(checked) => {
+											appSettings.setUseSelfhstIcons(checked);
+											toast.success(checked ? 'selfh.st icons enabled' : 'selfh.st icons disabled');
+										}}
+										disabled={!$canAccess('settings', 'edit')}
+									/>
+								</div>
+								<p class="text-xs text-muted-foreground">Auto app logos on containers, fetched from selfh.st and cached locally</p>
 							</div>
 							<div class="space-y-1">
 								<div class="flex items-center gap-3">

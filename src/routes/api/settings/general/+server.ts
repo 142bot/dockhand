@@ -113,6 +113,8 @@ export interface GeneralSettings {
 	// Whether to surface a "view changelog" link next to the update badge.
 	// Resolved client-side from OCI labels / GHCR image names; no server hit.
 	showImageChangelogLinks: boolean;
+	// Show selfh.st app logos as container icons (opt-in; off by default).
+	useSelfhstIcons: boolean;
 	// Show the "What's New" modal after an upgrade (#1235)
 	showWhatsNew: boolean;
 	// Whether spinning icons (animate-spin etc.) are animated (#1169)
@@ -161,6 +163,7 @@ const DEFAULT_SETTINGS: Omit<GeneralSettings, 'scheduleRetentionDays' | 'eventRe
 	labelFilterMode: 'any' as const,
 	honorProxyLabels: true,
 	showImageChangelogLinks: true,
+	useSelfhstIcons: false,
 	showWhatsNew: true,
 	animateIcons: true,
 	editorIndentGuides: false,
@@ -276,6 +279,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultBackupImage,
 			honorProxyLabels,
 			showImageChangelogLinks,
+			useSelfhstIcons,
 			showWhatsNew,
 			animateIcons,
 			editorIndentGuides,
@@ -327,6 +331,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			getSetting('default_backup_image'),
 			getSetting('honor_proxy_labels'),
 			getSetting('show_image_changelog_links'),
+			getSetting('use_selfhst_icons'),
 			getSetting('show_whats_new'),
 			getSetting('animate_icons'),
 			getSetting('editor_indent_guides'),
@@ -382,6 +387,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultBackupImage: defaultBackupImage ?? DEFAULT_BACKUP_IMAGE,
 			honorProxyLabels: honorProxyLabels ?? DEFAULT_SETTINGS.honorProxyLabels,
 			showImageChangelogLinks: showImageChangelogLinks ?? DEFAULT_SETTINGS.showImageChangelogLinks,
+			useSelfhstIcons: useSelfhstIcons ?? DEFAULT_SETTINGS.useSelfhstIcons,
 			showWhatsNew: showWhatsNew ?? DEFAULT_SETTINGS.showWhatsNew,
 			animateIcons: animateIcons ?? DEFAULT_SETTINGS.animateIcons,
 			editorIndentGuides: editorIndentGuides ?? DEFAULT_SETTINGS.editorIndentGuides,
@@ -413,7 +419,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const body = await request.json();
-		const { confirmDestructive, showStoppedContainers, highlightUpdates, coloredActionButtons, actionIconSize, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, showGitCommitHash, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, defaultBackupImage, honorProxyLabels, showImageChangelogLinks, animateIcons, editorIndentGuides, protectScannerImages, showWhatsNew, defaultScannerNetworkMode, defaultScannerDns } = body;
+		const { confirmDestructive, showStoppedContainers, highlightUpdates, coloredActionButtons, actionIconSize, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, showGitCommitHash, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, defaultBackupImage, honorProxyLabels, showImageChangelogLinks, useSelfhstIcons, animateIcons, editorIndentGuides, protectScannerImages, showWhatsNew, defaultScannerNetworkMode, defaultScannerDns } = body;
 
 		if (confirmDestructive !== undefined) {
 			await setSetting('confirm_destructive', confirmDestructive);
@@ -571,6 +577,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (showImageChangelogLinks !== undefined && typeof showImageChangelogLinks === 'boolean') {
 			await setSetting('show_image_changelog_links', showImageChangelogLinks);
 		}
+		if (useSelfhstIcons !== undefined && typeof useSelfhstIcons === 'boolean') {
+			await setSetting('use_selfhst_icons', useSelfhstIcons);
+		}
 		if (showWhatsNew !== undefined && typeof showWhatsNew === 'boolean') {
 			await setSetting('show_whats_new', showWhatsNew);
 		}
@@ -644,6 +653,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			defaultBackupImageVal,
 			honorProxyLabelsVal,
 			showImageChangelogLinksVal,
+			useSelfhstIconsVal,
 			showWhatsNewVal,
 			animateIconsVal,
 			editorIndentGuidesVal,
@@ -695,6 +705,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			getSetting('default_backup_image'),
 			getSetting('honor_proxy_labels'),
 			getSetting('show_image_changelog_links'),
+			getSetting('use_selfhst_icons'),
 			getSetting('show_whats_new'),
 			getSetting('animate_icons'),
 			getSetting('editor_indent_guides'),
@@ -751,6 +762,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			honorProxyLabels: honorProxyLabelsVal ?? DEFAULT_SETTINGS.honorProxyLabels,
 			protectScannerImages: protectScannerImagesVal ?? DEFAULT_SETTINGS.protectScannerImages,
 			showImageChangelogLinks: showImageChangelogLinksVal ?? DEFAULT_SETTINGS.showImageChangelogLinks,
+			useSelfhstIcons: useSelfhstIconsVal ?? DEFAULT_SETTINGS.useSelfhstIcons,
 			showWhatsNew: showWhatsNewVal ?? DEFAULT_SETTINGS.showWhatsNew,
 			animateIcons: animateIconsVal ?? DEFAULT_SETTINGS.animateIcons,
 			editorIndentGuides: editorIndentGuidesVal ?? DEFAULT_SETTINGS.editorIndentGuides,

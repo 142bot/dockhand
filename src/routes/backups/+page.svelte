@@ -33,6 +33,7 @@
 	import SnapshotDiffModal from './SnapshotDiffModal.svelte';
 	import CreateBackupModal from './CreateBackupModal.svelte';
 	import EditBackupConfigModal from './EditBackupConfigModal.svelte';
+	import ContainerIcon from '$lib/components/ContainerIcon.svelte';
 
 	interface BackupConfig {
 		key: string;
@@ -825,7 +826,10 @@
 						{/if}
 					</button>
 				{:else if column.id === 'name'}
-					<span class="text-xs font-medium truncate">{config.targetName}</span>
+					<div class="flex items-center gap-1.5 min-w-0">
+						<ContainerIcon image="" name={config.targetName} class="w-3.5 h-3.5" fallbackIcon={config.type === 'stack' ? Layers : Box} showFallbackWhenOff />
+						<span class="text-xs font-medium truncate">{config.targetName}</span>
+					</div>
 				{:else if column.id === 'type'}
 					<div class="flex justify-center">
 						{#if config.type === 'container'}

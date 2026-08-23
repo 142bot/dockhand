@@ -925,6 +925,7 @@ export const gitRepositories = schemaProxy.gitRepositories;
 export const gitStacks = schemaProxy.gitStacks;
 export const secretProviders = schemaProxy.secretProviders;
 export const stackSources = schemaProxy.stackSources;
+export const containerIconOverrides = schemaProxy.containerIconOverrides;
 export const vulnerabilityScans = schemaProxy.vulnerabilityScans;
 export const auditLogs = schemaProxy.auditLogs;
 export const containerEvents = schemaProxy.containerEvents;

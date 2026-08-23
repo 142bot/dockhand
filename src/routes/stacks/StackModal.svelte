@@ -18,6 +18,8 @@
 	import { fetchBackupExecutions } from '$lib/utils/backup';
 	import type { Component } from 'svelte';
 	import FilesystemBrowser from './FilesystemBrowser.svelte';
+	import IconPickerModal from './IconPickerModal.svelte';
+	import StackIcon from '$lib/components/StackIcon.svelte';
 	import PathBarItem from './PathBarItem.svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Badge } from '$lib/components/ui/badge';
@@ -56,6 +58,61 @@
 	// Local effective state - can transition from create → edit after failed deploy
 	let mode = $state(propMode);
 	let stackName = $state(propStackName);
+	let formIcon = $state<string | null>(null);
+	let showIconPicker = $state(false);
+	// Create mode has no stack to POST to yet - stash the pending upload data URL and
+	// send it once the stack is created (see persistPendingIcon after handleCreate).
+	let pendingUploadImage = $state<string | null>(null);
+
+	// The picker value is one of: '' (clear), 'upload:<dataUrl>' (custom upload), or a
+	// lucide name / 'selfhst:<ref>'. In edit mode it persists immediately via the /icon
+	// endpoint; in create mode it is held locally until the stack exists.
+	async function onIconSelect(value: string) {
+		if (mode !== 'edit' || !stackName) {
+			// Create mode: hold locally, persist after the stack is created.
+			if (!value) {
+				formIcon = null;
+				pendingUploadImage = null;
+			} else if (value.startsWith('upload:')) {
+				pendingUploadImage = value.slice('upload:'.length);
+				formIcon = 'custom:stack';
+			} else {
+				pendingUploadImage = null;
+				formIcon = value;
+			}
+			return;
+		}
+		const envId = $currentEnvironment?.id ?? null;
+		const target = appendEnvParam(`/api/stacks/${encodeURIComponent(stackName)}/icon`, envId);
+		try {
+			if (!value) {
+				await fetch(target, { method: 'DELETE' });
+				formIcon = null;
+			} else if (value.startsWith('upload:')) {
+				const image = value.slice('upload:'.length);
+				const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) });
+				if (res.ok) formIcon = (await res.json()).icon;
+			} else {
+				const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ icon: value }) });
+				if (res.ok) formIcon = (await res.json()).icon;
+			}
+			onSuccess?.();
+		} catch (e) {
+			console.error('Failed to set stack icon:', e);
+		}
+	}
+
+	// After a stack is created, persist the icon picked in create mode to the new stack.
+	async function persistPendingIcon(name: string, envId: number | null) {
+		if (!formIcon) return;
+		const target = appendEnvParam(`/api/stacks/${encodeURIComponent(name)}/icon`, envId);
+		const body = pendingUploadImage ? { image: pendingUploadImage } : { icon: formIcon };
+		try {
+			await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+		} catch (e) {
+			console.error('Failed to set stack icon:', e);
+		}
+	}
 
 	// Form state
 	let newStackName = $state('');
@@ -1107,6 +1164,7 @@
 					const sourceMap = await sourcesRes.json();
 					const source = sourceMap?.[stackName];
 					formSecretProviderId = source?.secretProviderId ?? null;
+					formIcon = source?.icon ?? null;
 				}
 			} catch (e) {
 				console.warn('Failed to load stack source for secret provider binding:', e);
@@ -1289,6 +1347,8 @@
 			if (data.success === false) {
 				throw new Error(data.error || 'Failed to create stack');
 			}
+
+			await persistPendingIcon(newStackName.trim(), envId);
 
 			toast.success(`Created stack "${newStackName.trim()}"`);
 			onSuccess();
@@ -1528,6 +1588,8 @@
 		loadError = null;
 		rawEnvContent = '';
 		errors = {};
+		formIcon = null;
+		pendingUploadImage = null;
 		composeContent = '';
 		envVars = [];
 		envValidation = null;
@@ -1714,9 +1776,26 @@
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-3">
 					<div class="flex items-center gap-2">
-						<div class="p-1.5 rounded-md bg-zinc-200 dark:bg-zinc-700">
-							<Layers class="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
-						</div>
+						{#if !readonly}
+							<button
+								type="button"
+								title="Change stack icon"
+								onclick={() => (showIconPicker = true)}
+								class="p-1.5 rounded-md bg-zinc-200 dark:bg-zinc-700 hover:ring-2 hover:ring-primary transition-shadow"
+							>
+								{#if pendingUploadImage}
+									<img src={pendingUploadImage} alt="" class="w-4 h-4 rounded object-cover" />
+								{:else if formIcon}
+									<StackIcon icon={formIcon} {stackName} envId={$currentEnvironment?.id ?? null} class="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
+								{:else}
+									<Layers class="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
+								{/if}
+							</button>
+						{:else}
+							<div class="p-1.5 rounded-md bg-zinc-200 dark:bg-zinc-700">
+								<Layers class="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
+							</div>
+						{/if}
 						<div>
 							<Dialog.Title class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
 								{#if mode === 'create'}
@@ -2189,6 +2268,8 @@
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
+
+<IconPickerModal bind:open={showIconPicker} value={formIcon} onselect={onIconSelect} title="Choose a stack icon" />
 
 <!-- Unsaved changes confirmation dialog -->
 <Dialog.Root bind:open={showConfirmClose}>

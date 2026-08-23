@@ -358,10 +358,29 @@ export const stackSources = sqliteTable('stack_sources', {
 	// Names (no values) of secret keys injected from the bound provider on the last
 	// deploy, so container inspect can mask them without a live provider call.
 	injectedSecretKeys: text('injected_secret_keys'),
+	// Per-stack icon: a lucide name ('server'), 'selfhst:<ref>', or 'custom:<file>'.
+	// Null -> UI falls back to a generic icon.
+	icon: text('icon'),
 	createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 	updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 }, (table) => ({
 	stackSourceEnvUnique: unique().on(table.stackName, table.environmentId)
+}));
+
+// Per-container icon override. Containers are ephemeral Docker objects (no DB row of
+// their own), so the override is keyed by (containerName, environmentId) - the name is
+// stable across recreation (auto-update, compose up), unlike the container id. Absent
+// row -> the UI's automatic image/name icon matching applies.
+export const containerIconOverrides = sqliteTable('container_icon_overrides', {
+	id: integer('id').primaryKey({ autoIncrement: true }),
+	containerName: text('container_name').notNull(),
+	environmentId: integer('environment_id').references(() => environments.id, { onDelete: 'cascade' }),
+	// A lucide name ('server'), 'selfhst:<ref>', or 'custom:<file>'. Same shape as stack icons.
+	icon: text('icon').notNull(),
+	createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+	updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
+}, (table) => ({
+	containerIconEnvUnique: unique().on(table.containerName, table.environmentId)
 }));
 
 export const stackEnvironmentVariables = sqliteTable('stack_environment_variables', {
@@ -506,6 +525,8 @@ export const backupDestinations = sqliteTable('backup_destinations', {
 	envVars: text('env_vars'),                       // JSON: { key: value } — values encrypted
 	flags: text('flags'),                            // extra restic CLI flags
 	hostPath: text('host_path'),                     // bind-mount source for local repos
+	cacert: text('cacert'),                          // AES-256-GCM encrypted PEM: self-signed CA for a TLS backend (RESTIC_CACERT)
+	tlsClientCert: text('tls_client_cert'),          // AES-256-GCM encrypted PEM: client cert+key for mTLS (RESTIC_TLS_CLIENT_CERT)
 	policies: text('policies'),                      // JSON: { pruneSchedule, checkSchedule, autoUnlock, maxUnused }
 	lastTestAt: text('last_test_at'),
 	lastTestStatus: text('last_test_status'),        // 'success' | 'failed'
