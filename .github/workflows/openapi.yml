@@ -32,7 +32,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          # Pin to 24.18.1: better-sqlite3 has no prebuilt binary for 24.19.0 and its
+          # node-gyp source build crashes on the runner (undici h1 assert), so a plain
+          # `node-version: 24` (which resolves to the latest 24.x) breaks npm install.
+          node-version: 24.18.1
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
