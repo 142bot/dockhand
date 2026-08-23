@@ -943,6 +943,8 @@
 										branches={branches}
 										loading={branchesLoading}
 										placeholder="main"
+										onchange={(v) => { formNewRepoBranch = v; }}
+										onclear={() => { formNewRepoBranch = 'main'; }}
 									/>
 									<p class="text-xs text-muted-foreground">Type a name or pick from the list.</p>
 								</div>

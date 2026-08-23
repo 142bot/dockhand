@@ -69,6 +69,9 @@
 	let open = $state(false);
 	let searchQuery = $state('');
 
+	// Update the local value for an instant trigger refresh, then notify the parent (which
+	// owns the value via onchange). `displayValue` below MUST be $derived or the trigger
+	// stays frozen on the initial value.
 	function selectBranch(branch: string) {
 		value = branch;
 		open = false;
@@ -77,7 +80,6 @@
 	}
 
 	function clearBranch() {
-		value = '';
 		open = false;
 		searchQuery = '';
 		onclear?.();
@@ -100,8 +102,9 @@
 	);
 
 	// Display: show the current value; fall back to the placeholder when empty
-	// (e.g. no branch chosen -> "main").
-	const displayValue = value || placeholder;
+	// (e.g. no branch chosen -> "main"). MUST be $derived - a plain const is computed
+	// once and would freeze the trigger on the initial value.
+	const displayValue = $derived(value || placeholder);
 </script>
 
 <Popover.Root bind:open>
