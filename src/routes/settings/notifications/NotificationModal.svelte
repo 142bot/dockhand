@@ -451,6 +451,8 @@ ntfys://host/topic?auth=base64token
 pushover://user_key/api_token
 pushover://user_key/api_token/device1/device2
 pover://user_key@api_token/device1/device2
+mqtt://user:pass@broker-host:1883/dockhand/events?qos=1&amp;retain=true
+mqtts://broker-host:8883/dockhand/events
 workflows://hostname/workflow/signature
 bark://bark_key
 bark://host/bark_key
@@ -463,7 +465,7 @@ zabbixs://hostname/api_jsonrpc.php?token=TOKEN&amp;host=HOST&amp;key=ITEM_KEY"
 						class="flex min-h-[220px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					></textarea>
 					<p class="text-xs text-muted-foreground">
-						Built-in channels: Discord, Slack, Mattermost, Telegram, ntfy, Gotify, Pushover, Bark, Signal (via signal-cli-rest-api), Microsoft Teams (via Workflows), Zabbix (via history.push), and generic JSON.
+						Built-in channels: Discord, Slack, Mattermost, Telegram, ntfy, Gotify, Pushover, MQTT, Bark, Signal (via signal-cli-rest-api), Microsoft Teams (via Workflows), Zabbix (via history.push), and generic JSON.
 					</p>
 					<p class="flex gap-1.5 text-xs text-muted-foreground">
 						<HelpCircle class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />

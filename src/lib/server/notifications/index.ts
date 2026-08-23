@@ -41,6 +41,7 @@ import { sendBark } from './bark';
 import { sendSignal } from './signal';
 import { sendApprise } from './apprise';
 import { sendPushover } from './pushover';
+import { sendMqtt } from './mqtt';
 import { sendGenericWebhook } from './generic-webhook';
 import { sendWorkflows } from './workflows';
 import { sendZabbix } from './zabbix';
@@ -110,6 +111,9 @@ async function sendToAppriseUrl(url: string, payload: NotificationPayload): Prom
 			case 'pushover':
 			case 'pover':
 				return await sendPushover(url, payload);
+			case 'mqtt':
+			case 'mqtts':
+				return await sendMqtt(url, payload);
 			case 'json':
 			case 'jsons':
 				return await sendGenericWebhook(url, payload);
