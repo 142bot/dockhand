@@ -29,6 +29,13 @@ function prepareDestination(dest: any, includeSecrets: boolean): any {
 	} else {
 		delete result.envVars;
 	}
+	// TLS certs (PEM) are never sent to the client - not even the ciphertext, and not even
+	// to a manage caller (like the password). The edit form only needs to know one IS set so
+	// it can show "leave blank to keep", so expose booleans and strip the values.
+	result.hasCacert = !!dest.cacert;
+	result.hasTlsClientCert = !!dest.tlsClientCert;
+	delete result.cacert;
+	delete result.tlsClientCert;
 	// Split the stored `flags` JSON into separate fields the edit form binds to (legacy
 	// bare strings surface as backupFlags), so the UI never parses the string-vs-JSON column.
 	const { backup, restore } = parseBackupFlags(dest.flags);
@@ -72,7 +79,7 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
  * summary: Update a backup destination, re-validating repository and flags when supplied and re-registering maintenance schedules when policies change
  * description: Permission denial (403, "backups:manage") is produced by the shared requireBackups route guard.
  * path: id:integer! Backup destination id (from GET /api/backup/destinations)
- * body: {name:string, repository:string, password:string, envVars:{}, flags:string, hostPath:string, policies:string}
+ * body: {name:string, repository:string, password:string, envVars:{}, flags:string, hostPath:string, cacert:string, tlsClientCert:string, policies:string}
  * body-example: {"name":"S3 Offsite (renamed)","policies":"{\"pruneEnabled\":true,\"pruneSchedule\":\"0 0 1 * *\"}"}
  * resp-200: The updated backup destination object (password stripped, envVars echoed back to the managing caller)
  * resp-400: Invalid input — invalid id, unsupported/SSRF-blocked repository, invalid restic flags, invalid policy cron, or switching to a local repository used by a remote-environment config
@@ -134,6 +141,8 @@ export const PUT: RequestHandler = async (event) => {
 			envVars: body.envVars !== undefined ? JSON.stringify(body.envVars) : undefined,
 			flags: flagsColumn,
 			hostPath: body.hostPath,
+			cacert: body.cacert,
+			tlsClientCert: body.tlsClientCert,
 			policies: body.policies
 		});
 		if (!updated) return json({ error: 'Update failed' }, { status: 500 });

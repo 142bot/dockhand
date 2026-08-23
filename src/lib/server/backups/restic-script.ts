@@ -47,6 +47,28 @@ export function gcsCredentialPreamble(): string {
 	return `if [ -n "\${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then umask 077; printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > ${GCS_CRED_FILE}; export GOOGLE_APPLICATION_CREDENTIALS=${GCS_CRED_FILE}; fi; `;
 }
 
+/** Where the helper writes the destination's TLS PEMs before restic reads them. */
+export const CACERT_FILE = '/tmp/dockhand-restic-ca.pem';
+export const TLS_CLIENT_FILE = '/tmp/dockhand-restic-client.pem';
+
+/**
+ * restic verifies a TLS backend (rest-server, self-hosted MinIO/S3, rclone-over-https)
+ * against a CA FILE at RESTIC_CACERT, and does client-cert mTLS from a PEM at
+ * RESTIC_TLS_CLIENT_CERT. The helper container can't bind a file from the Dockhand host
+ * (it runs on the TARGET daemon, possibly a remote/Hawser host), so we pass the PEM
+ * CONTENT as RESTIC_CACERT_PEM / RESTIC_TLS_CLIENT_CERT_PEM env vars; this preamble (same
+ * shell as restic) writes each to a 0600 file and points the real restic var at it.
+ *
+ * A no-op when both vars are empty/unset, so plaintext or public-CA backends are untouched.
+ * `printf %s` avoids the multi-line PEM being mangled by echo's escape handling.
+ */
+export function tlsCertPreamble(): string {
+	return (
+		`if [ -n "\${RESTIC_CACERT_PEM:-}" ]; then umask 077; printf '%s' "$RESTIC_CACERT_PEM" > ${CACERT_FILE}; export RESTIC_CACERT=${CACERT_FILE}; fi; ` +
+		`if [ -n "\${RESTIC_TLS_CLIENT_CERT_PEM:-}" ]; then umask 077; printf '%s' "$RESTIC_TLS_CLIENT_CERT_PEM" > ${TLS_CLIENT_FILE}; export RESTIC_TLS_CLIENT_CERT=${TLS_CLIENT_FILE}; fi; `
+	);
+}
+
 /**
  * Fail loud if a bind-mounted local repo isn't visible on the target daemon's
  * host: Docker would auto-create the missing path empty, silently backing up to
@@ -131,7 +153,8 @@ export function classifyProcError(
 export function buildHelperEnv(
 	repository: string,
 	password: string,
-	allowedCloudVars: Record<string, string>
+	allowedCloudVars: Record<string, string>,
+	tls?: { cacert?: string | null; clientCert?: string | null }
 ): string[] {
 	const env = [
 		`RESTIC_REPOSITORY=${repository}`,
@@ -139,6 +162,9 @@ export function buildHelperEnv(
 		'RESTIC_PROGRESS_FPS=2',
 	];
 	for (const [k, v] of Object.entries(allowedCloudVars)) env.push(`${k}=${v}`);
+	// PEM CONTENT (not a path) - tlsCertPreamble writes it to a file in the helper.
+	if (tls?.cacert) env.push(`RESTIC_CACERT_PEM=${tls.cacert}`);
+	if (tls?.clientCert) env.push(`RESTIC_TLS_CLIENT_CERT_PEM=${tls.clientCert}`);
 	return env;
 }
 

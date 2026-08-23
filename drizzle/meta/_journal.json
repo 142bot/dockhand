@@ -92,6 +92,20 @@
       "when": 1786967313223,
       "tag": "0012_add_git_stack_branch",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787416077452,
+      "tag": "0013_add_stack_icon",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1787468495122,
+      "tag": "0014_backup_tls_and_container_icons",
+      "breakpoints": true
     }
   ]
 }

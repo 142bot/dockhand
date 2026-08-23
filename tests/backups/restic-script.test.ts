@@ -17,6 +17,9 @@ import {
 	classifyProcError,
 	gcsCredentialPreamble,
 	GCS_CRED_FILE,
+	tlsCertPreamble,
+	CACERT_FILE,
+	TLS_CLIENT_FILE,
 } from '../../src/lib/server/backups/restic-script';
 
 describe('shellQuote', () => {
@@ -171,6 +174,21 @@ describe('buildHelperEnv', () => {
 		const env = buildHelperEnv('r', 'p', {});
 		expect(env).toHaveLength(3);
 	});
+	it('adds the TLS PEM content vars when certs are supplied', () => {
+		const env = buildHelperEnv('rest:https://x/repo', 'p', {}, { cacert: 'CA-PEM', clientCert: 'CLIENT-PEM' });
+		expect(env).toContain('RESTIC_CACERT_PEM=CA-PEM');
+		expect(env).toContain('RESTIC_TLS_CLIENT_CERT_PEM=CLIENT-PEM');
+	});
+	it('adds only the certs that are present (independent of each other)', () => {
+		const caOnly = buildHelperEnv('r', 'p', {}, { cacert: 'CA', clientCert: null });
+		expect(caOnly).toContain('RESTIC_CACERT_PEM=CA');
+		expect(caOnly.some((e) => e.startsWith('RESTIC_TLS_CLIENT_CERT_PEM='))).toBe(false);
+	});
+	it('adds no cert vars when tls is omitted (no-op for non-TLS backends)', () => {
+		const env = buildHelperEnv('s3:bucket', 'p', { AWS_ACCESS_KEY_ID: 'k' });
+		expect(env.some((e) => e.startsWith('RESTIC_CACERT_PEM='))).toBe(false);
+		expect(env.some((e) => e.startsWith('RESTIC_TLS_CLIENT_CERT_PEM='))).toBe(false);
+	});
 });
 
 describe('buildHelperBinds', () => {
@@ -284,6 +302,30 @@ describe('gcsCredentialPreamble', () => {
 	});
 	it('sets a restrictive umask so the cred file is not world-readable', () => {
 		expect(p).toContain('umask 077');
+	});
+	it('ends with a separator so it can be prepended before the next command', () => {
+		expect(p.endsWith('; ')).toBe(true);
+	});
+});
+
+describe('tlsCertPreamble (self-signed TLS backend: CA + client cert)', () => {
+	const p = tlsCertPreamble();
+	it('guards each cert on its own env var (no-op for plaintext/public-CA backends)', () => {
+		// Both branches are inside `if [ -n "${...:-}" ]`, so a run with neither var set
+		// does nothing - S3/local/public-HTTPS repos are untouched.
+		expect(p).toContain('if [ -n "${RESTIC_CACERT_PEM:-}" ]');
+		expect(p).toContain('if [ -n "${RESTIC_TLS_CLIENT_CERT_PEM:-}" ]');
+	});
+	it('writes the CA PEM to the private file and points RESTIC_CACERT at it', () => {
+		expect(p).toContain(`printf '%s' "$RESTIC_CACERT_PEM" > ${CACERT_FILE}`);
+		expect(p).toContain(`export RESTIC_CACERT=${CACERT_FILE}`);
+	});
+	it('writes the client PEM to the private file and points RESTIC_TLS_CLIENT_CERT at it', () => {
+		expect(p).toContain(`printf '%s' "$RESTIC_TLS_CLIENT_CERT_PEM" > ${TLS_CLIENT_FILE}`);
+		expect(p).toContain(`export RESTIC_TLS_CLIENT_CERT=${TLS_CLIENT_FILE}`);
+	});
+	it('sets a restrictive umask so neither cert file is world-readable', () => {
+		expect(p.match(/umask 077/g)?.length).toBe(2);
 	});
 	it('ends with a separator so it can be prepended before the next command', () => {
 		expect(p.endsWith('; ')).toBe(true);

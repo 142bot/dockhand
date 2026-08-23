@@ -31,7 +31,7 @@ import {
 } from './security';
 import { TIMEOUTS, type ResticRun, type TimeoutTier } from './models';
 import { withTimeout, parseBackupFlags } from './helpers';
-import { resticCommand, finishScript, readExitMarker, buildHelperEnv, buildHelperBinds, localRepoGuard, localRepoChown, classifyProcClose, classifyProcError, gcsCredentialPreamble } from './restic-script';
+import { resticCommand, finishScript, readExitMarker, buildHelperEnv, buildHelperBinds, localRepoGuard, localRepoChown, classifyProcClose, classifyProcError, gcsCredentialPreamble, tlsCertPreamble } from './restic-script';
 import { translateContainerPathViaMount } from '../host-path';
 
 /** The destination's BACKUP/global flags for a given restic subcommand. Restore has its
@@ -58,6 +58,39 @@ export async function withGcsCredFile<T>(env: Record<string, string>, fn: (env: 
 	writeFileSync(file, json, { mode: 0o600 });
 	try {
 		return await fn({ ...env, GOOGLE_APPLICATION_CREDENTIALS: file });
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * For a LOCAL restic run (Dockhand host), a self-signed TLS backend needs a CA FILE at
+ * RESTIC_CACERT (and a client-cert PEM at RESTIC_TLS_CLIENT_CERT for mTLS). The certs are
+ * stored as PEM CONTENT on the destination; this writes them to private 0600 temp files,
+ * points the restic vars at them for the duration of `fn`, and deletes them after.
+ * A no-op when the destination has no certs (fn(env) unchanged). The helper-container path
+ * handles this itself in the shell script (tlsCertPreamble).
+ */
+export async function withTlsCertFiles<T>(
+	certs: { cacert: string | null; clientCert: string | null },
+	env: Record<string, string>,
+	fn: (env: Record<string, string>) => Promise<T>
+): Promise<T> {
+	if (!certs.cacert && !certs.clientCert) return fn(env);
+	const dir = mkdtempSync(join(tmpdir(), 'dockhand-tls-'));
+	const runEnv = { ...env };
+	if (certs.cacert) {
+		const p = join(dir, 'ca.pem');
+		writeFileSync(p, certs.cacert, { mode: 0o600 });
+		runEnv.RESTIC_CACERT = p;
+	}
+	if (certs.clientCert) {
+		const p = join(dir, 'client.pem');
+		writeFileSync(p, certs.clientCert, { mode: 0o600 });
+		runEnv.RESTIC_TLS_CLIENT_CERT = p;
+	}
+	try {
+		return await fn(runEnv);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -135,7 +168,7 @@ export class Restic {
 		});
 		const fullArgs = [...args, ...backupFlagsForCommand(destination, args[0])];
 
-		return withGcsCredFile(env, (runEnv) => new Promise<ResticRun>((resolve) => {
+		return withTlsCertFiles({ cacert: decrypted.decryptedCacert, clientCert: decrypted.decryptedTlsClientCert }, env, (tlsEnv) => withGcsCredFile(tlsEnv, (runEnv) => new Promise<ResticRun>((resolve) => {
 			let stdout = '';
 			let stderr = '';
 			let settled = false;
@@ -153,7 +186,7 @@ export class Restic {
 				const { exitCode, stderr: stderrOut } = classifyProcError(err, stderr);
 				done({ exitCode, stdout, stderr: stderrOut });
 			});
-		}));
+		})));
 	}
 
 	/**
@@ -175,7 +208,7 @@ export class Restic {
 		});
 		const fullArgs = [...args, ...backupFlagsForCommand(destination, args[0])];
 
-		return withGcsCredFile(env, (runEnv) => new Promise((resolve) => {
+		return withTlsCertFiles({ cacert: decrypted.decryptedCacert, clientCert: decrypted.decryptedTlsClientCert }, env, (tlsEnv) => withGcsCredFile(tlsEnv, (runEnv) => new Promise((resolve) => {
 			const chunks: Buffer[] = [];
 			let stderr = '';
 			let settled = false;
@@ -194,7 +227,7 @@ export class Restic {
 				const { exitCode, stderr: stderrOut } = classifyProcError(err, stderr);
 				done({ exitCode, stdout: Buffer.concat(chunks), stderr: stderrOut });
 			});
-		}));
+		})));
 	}
 
 	/**
@@ -208,7 +241,8 @@ export class Restic {
 		const env = buildHelperEnv(
 			destination.repository,
 			decrypted.decryptedPassword,
-			filterCloudEnvVars(decrypted.decryptedEnvVars)
+			filterCloudEnvVars(decrypted.decryptedEnvVars),
+			{ cacert: decrypted.decryptedCacert, clientCert: decrypted.decryptedTlsClientCert }
 		);
 		const binds = buildHelperBinds(destination.repository, spec.binds, (repo) =>
 			destination.hostPath || translateLocalRepoPath(repo)
@@ -233,9 +267,14 @@ export class Restic {
 		// Prepended inside the marked command so it shares restic's shell; covers every
 		// helper op (backup/restore/swap) in one place.
 		const gcs = gcsCredentialPreamble();
+		// TLS: materialize a self-signed CA / client cert to a file + export RESTIC_CACERT /
+		// RESTIC_TLS_CLIENT_CERT before restic runs (no-op when the destination has none).
+		// Same shell as restic; covers every helper op. Works on a remote/Hawser daemon
+		// because the PEM rides an env var, not a host bind.
+		const tls = tlsCertPreamble();
 		const cmd = spec.script
-			? ['sh', '-c', finishScript(`( ${gcs}${guard}${spec.script} )`) + chown]
-			: ['sh', '-c', finishScript(`${gcs}${guard}${resticCommand([...argv, ...backupFlagsForCommand(destination, argv[0])])}`) + chown];
+			? ['sh', '-c', finishScript(`( ${gcs}${tls}${guard}${spec.script} )`) + chown]
+			: ['sh', '-c', finishScript(`${gcs}${tls}${guard}${resticCommand([...argv, ...backupFlagsForCommand(destination, argv[0])])}`) + chown];
 
 		// The small metadata files (metadata.json + the light stack-dir listing) go into
 		// the container via put-archive (docker cp), NOT the Cmd, so they can't blow
@@ -309,7 +348,7 @@ const HELPER_IMAGE_MEMO_MS = 30_000;
 
 export async function ensureHelperImage(envId?: number | null): Promise<string> {
 	const image = (await getSetting('default_backup_image')) || DEFAULT_HELPER_IMAGE;
-	const memoKey = `${image} ${envId ?? ''}`;
+	const memoKey = `${image} ${envId ?? ''}`;
 	const until = helperImagePresentUntil.get(memoKey);
 	if (until && until > Date.now()) return image; // recently confirmed present on this env
 

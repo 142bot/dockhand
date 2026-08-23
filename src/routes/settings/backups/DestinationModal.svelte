@@ -25,6 +25,8 @@
 		repository: string;
 		hostPath?: string | null;
 		envVars?: Record<string, string>;
+		hasCacert?: boolean;         // a CA cert is stored (the PEM itself is never sent back)
+		hasTlsClientCert?: boolean;  // a client cert is stored
 		flags?: string;
 		backupFlags?: string;   // split from the GET endpoint (legacy strings surface here)
 		restoreFlags?: string;
@@ -207,6 +209,29 @@
 		}
 		input.value = ''; // let the same file be re-picked
 	}
+
+	// TLS certs (PEM). Sent as content to the server, which stores them encrypted and
+	// NEVER sends the PEM back (only hasCacert/hasTlsClientCert booleans). So on edit
+	// these start blank = "keep the stored cert"; an explicit clear zeroes them out.
+	let formCacert = $state('');
+	let formTlsClientCert = $state('');
+	let hadCacert = $state(false);        // a cert was already stored when the modal opened
+	let hadTlsClientCert = $state(false);
+	let caFileInput = $state<HTMLInputElement | null>(null);
+	let clientCertFileInput = $state<HTMLInputElement | null>(null);
+
+	async function uploadPem(which: 'ca' | 'client', e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		try {
+			const text = await file.text();
+			if (which === 'ca') formCacert = text; else formTlsClientCert = text;
+		} catch {
+			toast.error('Could not read the selected file');
+		}
+		input.value = '';
+	}
 	let formPassword = $state('');
 	let formBackupFlags = $state('');
 	let formRestoreFlags = $state('');
@@ -282,6 +307,7 @@
 	function resetForm() {
 		formName = ''; formBackendType = 'local'; formFields = {}; formPassword = '';
 		formBackupFlags = ''; formRestoreFlags = ''; formError = '';
+		formCacert = ''; formTlsClientCert = ''; hadCacert = false; hadTlsClientCert = false;
 		formSaving = false;
 		policyPruneEnabled = true; policyPruneSchedule = '0 0 1 * *'; policyPruneMaxUnused = '10';
 		policyCheckEnabled = true; policyCheckSchedule = '0 0 1 * *';
@@ -316,6 +342,11 @@
 				// (legacy bare strings surface as backupFlags), so the form binds them directly.
 				formBackupFlags = destination.backupFlags ?? '';
 				formRestoreFlags = destination.restoreFlags ?? '';
+				// PEMs are never returned; start blank and remember one is stored so the
+				// UI can say "leave blank to keep" and offer a Clear button.
+				formCacert = ''; formTlsClientCert = '';
+				hadCacert = !!destination.hasCacert;
+				hadTlsClientCert = !!destination.hasTlsClientCert;
 				formError = '';
 				// Load policies
 				const pol = destination.policies ? (() => { try { return JSON.parse(destination.policies); } catch { return {}; } })() : {};
@@ -380,7 +411,13 @@
 				// instance role) that hangs on a retry loop instead of failing fast.
 				const repository = selectedBackend.buildRepo(formFields);
 				const envVars = collectEnvVars();
-				payload = { repository, password: formPassword, envVars: Object.keys(envVars).length > 0 ? envVars : undefined };
+				payload = {
+					repository, password: formPassword,
+					envVars: Object.keys(envVars).length > 0 ? envVars : undefined,
+					// Carry the TLS PEMs so a pre-save test of a private-CA backend can validate.
+					cacert: formCacert.trim() || undefined,
+					tlsClientCert: formTlsClientCert.trim() || undefined
+				};
 			}
 			const res = await fetch('/api/backup/destinations/test', {
 				method: 'POST',
@@ -486,6 +523,15 @@
 				policies: JSON.stringify(policies)
 			};
 			if (formPassword || !isEditing) body.password = formPassword || undefined;
+			// TLS certs, with keep/clear semantics on edit:
+			//   typed value  -> send it (set/replace)
+			//   blank + one stored -> omit (server keeps the existing cert)
+			//   explicitly cleared (blank + none was stored, or user hit Clear) -> send ''
+			// On create, blank just means "no cert" so an empty string is fine to omit.
+			if (formCacert.trim()) body.cacert = formCacert;
+			else if (isEditing && !hadCacert) body.cacert = '';
+			if (formTlsClientCert.trim()) body.tlsClientCert = formTlsClientCert;
+			else if (isEditing && !hadTlsClientCert) body.tlsClientCert = '';
 			const res = await fetch(isEditing ? `/api/backup/destinations/${destination!.id}` : '/api/backup/destinations', {
 				method: isEditing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
 			});
@@ -677,6 +723,63 @@
 							<span class="cursor-pointer hover:text-foreground" onclick={() => { formRestoreFlags = (formRestoreFlags + ' --exclude-xattr security.selinux').trim(); }} title="Skip the SELinux xattr the helper can't remove on a cross-distro restore (e.g. Ubuntu -> Fedora)">--exclude-xattr security.selinux</span>
 						</div>
 					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- TLS certificates: for any backend that speaks TLS with a private CA (self-hosted
+		     rest-server, MinIO/S3, rclone-over-https). Optional; blank = use the system trust
+		     store, no client cert. Shown for all backend types (someone may run MinIO with a
+		     private CA). PEM content, uploaded or pasted. -->
+		<div class="border-t pt-3 mt-2 space-y-3">
+			<span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">TLS certificates (optional)</span>
+			<p class="text-xs text-muted-foreground -mt-1">
+				For a backend served over HTTPS with a private/self-signed CA. Leave blank to use the system trust store.
+			</p>
+			<div class="grid grid-cols-2 gap-6">
+				<div class="space-y-1">
+					<div class="flex items-center justify-between">
+						<Label for="dest-cacert">CA certificate</Label>
+						<div class="flex gap-1">
+							{#if isEditing && hadCacert && !formCacert}
+								<Button variant="outline" size="sm" class="h-7 px-2 text-xs text-destructive" onclick={() => { hadCacert = false; }}>Clear</Button>
+							{/if}
+							<Button variant="outline" size="sm" class="h-7 px-2 text-xs" onclick={() => caFileInput?.click()}>
+								<Upload class="mr-1 h-3 w-3" />Upload
+							</Button>
+						</div>
+					</div>
+					<input type="file" accept=".pem,.crt,.cer,.ca,application/x-pem-file,text/plain" class="hidden" bind:this={caFileInput} onchange={(e) => uploadPem('ca', e)} />
+					<Textarea
+						id="dest-cacert"
+						rows={4}
+						bind:value={formCacert}
+						placeholder={isEditing && hadCacert ? '(a CA certificate is stored - leave blank to keep it)' : '-----BEGIN CERTIFICATE-----'}
+						class="field-sizing-fixed max-h-40 resize-y overflow-auto font-mono text-xs"
+					/>
+					<p class="text-xs text-muted-foreground">Verifies the backend's TLS certificate (restic <code class="font-mono">RESTIC_CACERT</code>).</p>
+				</div>
+				<div class="space-y-1">
+					<div class="flex items-center justify-between">
+						<Label for="dest-client-cert">Client certificate (mTLS)</Label>
+						<div class="flex gap-1">
+							{#if isEditing && hadTlsClientCert && !formTlsClientCert}
+								<Button variant="outline" size="sm" class="h-7 px-2 text-xs text-destructive" onclick={() => { hadTlsClientCert = false; }}>Clear</Button>
+							{/if}
+							<Button variant="outline" size="sm" class="h-7 px-2 text-xs" onclick={() => clientCertFileInput?.click()}>
+								<Upload class="mr-1 h-3 w-3" />Upload
+							</Button>
+						</div>
+					</div>
+					<input type="file" accept=".pem,.crt,.cer,.key,application/x-pem-file,text/plain" class="hidden" bind:this={clientCertFileInput} onchange={(e) => uploadPem('client', e)} />
+					<Textarea
+						id="dest-client-cert"
+						rows={4}
+						bind:value={formTlsClientCert}
+						placeholder={isEditing && hadTlsClientCert ? '(a client certificate is stored - leave blank to keep it)' : 'certificate + private key in one PEM'}
+						class="field-sizing-fixed max-h-40 resize-y overflow-auto font-mono text-xs"
+					/>
+					<p class="text-xs text-muted-foreground">Certificate + key in one PEM for mutual TLS (restic <code class="font-mono">RESTIC_TLS_CLIENT_CERT</code>).</p>
 				</div>
 			</div>
 		</div>
