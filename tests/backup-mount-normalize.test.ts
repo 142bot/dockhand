@@ -68,6 +68,22 @@ describe('volumeInfoFromBind — subset-backup identifier (regression)', () => {
 		expect(fromBind.name).toBe(fromMounts.name); // 'shared-vol' on both — the filter can match
 	});
 
+	test('a bare .map(volumeInfoFromBind) passes the array index as `taken` and crashes (#1456)', () => {
+		// EditContainerModal built the picker list with `.map(volumeInfoFromBind)`. .map passes
+		// (element, index, array), so the numeric index landed in the `taken` Set param and
+		// `taken.has(...)` threw "o.has is not a function", crashing the whole Backups tab. The
+		// call site MUST wrap it (`.map((v) => volumeInfoFromBind(v))`). This documents the trap.
+		const binds = [
+			{ hostPath: '/opt/appdata/chaptarr', containerPath: '/config' },
+			{ hostPath: 'named-vol', containerPath: '/data' }
+		];
+		expect(() => binds.map(volumeInfoFromBind)).toThrow(); // the bug: index-as-taken
+		// The correct call site wraps the callback so `taken` keeps its default Set.
+		const out = binds.map((v) => volumeInfoFromBind(v));
+		expect(out[0].mountType).toBe('bind');
+		expect(out[1].mountType).toBe('volume');
+	});
+
 	// The fnstudio-factory bug: normalizeMounts() (the picker's source) keyed a bind
 	// on its host SOURCE, but the engine's selectedVolumes filter matches on the
 	// container DESTINATION — so every bind picked as a subset was silently dropped

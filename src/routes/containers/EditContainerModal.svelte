@@ -1249,7 +1249,7 @@
 					<BackupPanel
 						bind:this={backupPanelRef}
 						containerName={name}
-						volumes={volumeMappings.filter(v => v.hostPath && v.containerPath).map(volumeInfoFromBind)}
+						volumes={volumeMappings.filter(v => v.hostPath && v.containerPath).map((v) => volumeInfoFromBind(v))}
 						type="container"
 						onTally={(t) => (backupTally = t)}
 					/>
