@@ -6,6 +6,14 @@
     "changes": [
       {
         "type": "feature",
+        "text": "TLS backup repositories with a private CA and optional mutual TLS (#1451)"
+      },
+      {
+        "type": "feature",
+        "text": "stack and container icons - pick an icon per stack or per container (survives recreation), plus automatic app logos on containers (#31)"
+      },
+      {
+        "type": "feature",
         "text": "Azure Key Vault as a secret provider (bulk pull or inline azurekv:// references)"
       },
       {
@@ -15,6 +23,18 @@
       {
         "type": "feature",
         "text": "branch selector on git stack, with per-stack branch override (PR#1343, @brx19)"
+      },
+      {
+        "type": "feature",
+        "text": "click the update icon in the image column to update a container (#1435)"
+      },
+      {
+        "type": "feature",
+        "text": "Pushover notifications can target specific devices (#1411)"
+      },
+      {
+        "type": "feature",
+        "text": "keep specific images from being pruned with a dockhand.prune=false label (#1391)"
       },
       {
         "type": "fix",
@@ -47,6 +67,10 @@
       {
         "type": "fix",
         "text": "fix backpressure in Docker streaming responses (PR#1445, @StefanSa)"
+      },
+      {
+        "type": "fix",
+        "text": "sort IPv6 subnets and addresses numerically instead of randomly (#1453)"
       }
     ],
     "imageTag": "fnsys/dockhand:v1.0.44"
