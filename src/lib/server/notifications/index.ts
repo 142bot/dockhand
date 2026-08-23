@@ -108,6 +108,7 @@ async function sendToAppriseUrl(url: string, payload: NotificationPayload): Prom
 			case 'apprises':
 				return await sendApprise(url, payload);
 			case 'pushover':
+			case 'pover':
 				return await sendPushover(url, payload);
 			case 'json':
 			case 'jsons':

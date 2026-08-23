@@ -53,6 +53,38 @@ export function buildGotifyUrl(appriseUrl: string): { url: string; priority?: nu
 	};
 }
 
+// --- Pushover ---
+
+/**
+ * Parse a Pushover apprise URL into its parts. Two accepted schemes, both with
+ * an OPTIONAL trailing device list (backward compatible - existing
+ * pushover://user/token URLs parse with device undefined):
+ *   pushover://user_key/api_token[/device1[/device2...]]
+ *   pover://user_key@api_token[/device1[/device2...]]   (Apprise-native form)
+ * The Pushover API `device` field is a comma-separated list, so multiple path
+ * segments are joined with commas. Returns null on a malformed URL.
+ */
+export function parsePushoverUrl(
+	url: string
+): { userKey: string; apiToken: string; device?: string } | null {
+	let userKey: string;
+	let apiToken: string;
+	let rest: string;
+
+	const pover = url.match(/^pover:\/\/([^/@]+)@([^/]+)(?:\/(.*))?$/);
+	if (pover) {
+		[, userKey, apiToken, rest = ''] = pover;
+	} else {
+		const push = url.match(/^pushover:\/\/([^/]+)\/([^/]+)(?:\/(.*))?$/);
+		if (!push) return null;
+		[, userKey, apiToken, rest = ''] = push;
+	}
+
+	if (!userKey || !apiToken) return null;
+	const devices = rest.split('/').map((d) => d.trim()).filter(Boolean);
+	return { userKey, apiToken, device: devices.length ? devices.join(',') : undefined };
+}
+
 // --- Workflows (Microsoft Power Automate) ---
 
 export function parseWorkflowsUrl(appriseUrl: string): { hostname: string; workflow: string; signature: string } | null {

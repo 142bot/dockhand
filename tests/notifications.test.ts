@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { escapeTelegramMarkdown, buildGotifyUrl } from '../src/lib/utils/notification-parsers';
+import { escapeTelegramMarkdown, buildGotifyUrl, parsePushoverUrl } from '../src/lib/utils/notification-parsers';
 
 // Test the event type mapping logic (mirrors notifications.ts)
 const EVENT_TYPE_MAPPING: Record<string, string> = {
@@ -271,5 +271,59 @@ describe('Telegram Markdown Escaping', () => {
 		const envTag = ` [${escapeTelegramMarkdown(envName)}]`;
 		expect(envTag).toBe(' [my\\_server]');
 		expect(envTag).not.toContain('\\]');
+	});
+});
+
+describe('Pushover URL Parsing', () => {
+	test('backward compatible: pushover://user/token has no device', () => {
+		expect(parsePushoverUrl('pushover://uKey123/aToken456')).toEqual({
+			userKey: 'uKey123',
+			apiToken: 'aToken456',
+			device: undefined
+		});
+	});
+
+	test('pushover:// with a single device', () => {
+		expect(parsePushoverUrl('pushover://uKey123/aToken456/phone')).toEqual({
+			userKey: 'uKey123',
+			apiToken: 'aToken456',
+			device: 'phone'
+		});
+	});
+
+	test('pushover:// with multiple devices -> comma-separated list', () => {
+		expect(parsePushoverUrl('pushover://uKey123/aToken456/phone/tablet/desktop')).toEqual({
+			userKey: 'uKey123',
+			apiToken: 'aToken456',
+			device: 'phone,tablet,desktop'
+		});
+	});
+
+	test('apprise-native pover://user@token form, no device', () => {
+		expect(parsePushoverUrl('pover://uKey123@aToken456')).toEqual({
+			userKey: 'uKey123',
+			apiToken: 'aToken456',
+			device: undefined
+		});
+	});
+
+	test('apprise-native pover://user@token/device1/device2', () => {
+		expect(parsePushoverUrl('pover://uKey123@aToken456/phone/tablet')).toEqual({
+			userKey: 'uKey123',
+			apiToken: 'aToken456',
+			device: 'phone,tablet'
+		});
+	});
+
+	test('trailing slash / empty segments are ignored', () => {
+		expect(parsePushoverUrl('pushover://uKey123/aToken456/')?.device).toBeUndefined();
+		expect(parsePushoverUrl('pover://uKey123@aToken456//phone')?.device).toBe('phone');
+	});
+
+	test('malformed URLs return null', () => {
+		expect(parsePushoverUrl('pushover://onlyuser')).toBeNull();
+		expect(parsePushoverUrl('pover://useronly')).toBeNull();
+		expect(parsePushoverUrl('invalid://user/token')).toBeNull();
+		expect(parsePushoverUrl('')).toBeNull();
 	});
 });
