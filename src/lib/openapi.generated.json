@@ -6617,6 +6617,81 @@
         ]
       }
     },
+    "/api/containers/{id}/compose": {
+      "get": {
+        "operationId": "get_api_containers_id_compose",
+        "tags": [
+          "containers"
+        ],
+        "summary": "Generate a docker-compose service definition from a running container's inspect (requires the 'view' permission)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Container ID or name (from GET /api/containers)"
+          },
+          {
+            "name": "env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "The target environment ID (omit for the local/default Docker host) (from GET /api/environments)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "compose keeps only user-set env; composeFullEnv keeps every env var (incl. image-inherited); stackProject is the compose project the container already belongs to, or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "compose": {
+                      "type": "string"
+                    },
+                    "composeFullEnv": {
+                      "type": "string"
+                    },
+                    "serviceName": {
+                      "type": "string"
+                    },
+                    "stackProject": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "compose": "string",
+                  "composeFullEnv": "string",
+                  "serviceName": "string",
+                  "stackProject": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Failed to inspect the container"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/containers/{id}/exec": {
       "post": {
         "operationId": "post_api_containers_id_exec",

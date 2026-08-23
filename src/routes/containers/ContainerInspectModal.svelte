@@ -18,6 +18,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { currentEnvironment, appendEnvParam, environments } from '$lib/stores/environment';
 	import ImageLayersView from '../images/ImageLayersView.svelte';
+	import ContainerComposeTab from './ContainerComposeTab.svelte';
 	import LogsPanel from '../logs/LogsPanel.svelte';
 	import FileBrowserPanel from './FileBrowserPanel.svelte';
 	import { formatDateTime } from '$lib/stores/settings';
@@ -834,6 +835,7 @@
 						<Tabs.Trigger value="security" onclick={() => showLogs = false}>Security</Tabs.Trigger>
 						<Tabs.Trigger value="resources" onclick={() => showLogs = false}>Resources</Tabs.Trigger>
 						<Tabs.Trigger value="health" onclick={() => showLogs = false}>Health</Tabs.Trigger>
+						<Tabs.Trigger value="compose" onclick={() => showLogs = false}>Compose</Tabs.Trigger>
 					</Tabs.List>
 
 					<!-- Overview Tab -->
@@ -1832,6 +1834,17 @@
 							</div>
 						{:else}
 							<p class="text-sm text-muted-foreground">No health check configured</p>
+						{/if}
+					</Tabs.Content>
+
+					<!-- Compose Tab (last) -->
+					<Tabs.Content value="compose" class="flex-1 min-h-0">
+						{#if activeTab === 'compose'}
+							<ContainerComposeTab
+								{containerId}
+								containerName={containerName || containerId.slice(0, 12)}
+								envId={$currentEnvironment?.id ?? null}
+							/>
 						{/if}
 					</Tabs.Content>
 				</Tabs.Root>

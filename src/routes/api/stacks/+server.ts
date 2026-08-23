@@ -43,11 +43,12 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		const stackSources = await getStackSources(envIdNum);
 		const existingNames = new Set(stacks.map((s) => s.name));
 
-		// Enrich Docker-discovered stacks with source type from DB
+		// Enrich Docker-discovered stacks with source type + icon from DB
 		for (const stack of stacks) {
 			const source = stackSources.find(s => s.stackName === stack.name);
 			if (source) {
 				(stack as any).sourceType = source.sourceType;
+				(stack as any).icon = source.icon;
 			}
 		}
 
@@ -60,7 +61,8 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 					containers: [],
 					containerDetails: [],
 					status: 'created' as any,
-					sourceType: source.sourceType
+					sourceType: source.sourceType,
+					icon: source.icon
 				} as any);
 			}
 		}

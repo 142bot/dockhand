@@ -231,13 +231,16 @@
 		lintMarkers?: LintMarker[];
 		/** Fired when a lint gutter icon / underlined line is clicked (for the mini-modal). */
 		onLintClick?: (line: number) => void;
+		/** 1-based inclusive line ranges highlighted as freshly-added (green), e.g. a merged-in service. */
+		addedLineMarkers?: { line: number; endLine: number }[];
 	}
 
-	let { value = '', language = 'yaml', readonly = false, theme = 'dark', onchange, class: className = '', variableMarkers: variableMarkersProp = [], lintMarkers: lintMarkersProp = [], onLintClick }: Props = $props();
+	let { value = '', language = 'yaml', readonly = false, theme = 'dark', onchange, class: className = '', variableMarkers: variableMarkersProp = [], lintMarkers: lintMarkersProp = [], onLintClick, addedLineMarkers: addedLineMarkersProp = [] }: Props = $props();
 
 	// Keep markers reactive - destructured props with defaults lose reactivity
 	const variableMarkers = $derived(variableMarkersProp);
 	const lintMarkers = $derived(lintMarkersProp);
+	const addedLineMarkers = $derived(addedLineMarkersProp);
 
 	let container: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -640,6 +643,38 @@
 		provide: (f) => EditorView.decorations.from(f)
 	});
 
+	// Added-line highlight (green background) for a range of lines, e.g. a service merged
+	// into an existing compose. Reuses the lint decoration pattern; no gutter icon.
+	const updateAddedEffect = StateEffect.define<{ line: number; endLine: number }[]>();
+	const currentAddedField = StateField.define<{ line: number; endLine: number }[]>({
+		create: () => addedLineMarkers,
+		update(v, tr) {
+			for (const e of tr.effects) if (e.is(updateAddedEffect)) return e.value;
+			return v;
+		}
+	});
+
+	function buildAddedDecorations(doc: any, ranges: { line: number; endLine: number }[]): DecorationSet {
+		const decos: { from: number; deco: Decoration }[] = [];
+		for (const r of ranges) {
+			for (let line = r.line; line <= r.endLine; line++) {
+				if (line < 1 || line > doc.lines) continue;
+				decos.push({ from: doc.line(line).from, deco: Decoration.line({ class: 'cm-added-line' }) });
+			}
+		}
+		decos.sort((a, b) => a.from - b.from);
+		return Decoration.set(decos.map((d) => d.deco.range(d.from)), true);
+	}
+
+	const addedDecorationsField = StateField.define<DecorationSet>({
+		create: (state) => buildAddedDecorations(state.doc, addedLineMarkers),
+		update(v, tr) {
+			for (const e of tr.effects) if (e.is(updateAddedEffect)) return buildAddedDecorations(tr.state.doc, e.value);
+			return tr.docChanged ? buildAddedDecorations(tr.state.doc, tr.state.field(currentAddedField)) : v;
+		},
+		provide: (f) => EditorView.decorations.from(f)
+	});
+
 	const lintGutter = gutter({
 		class: 'cm-lint-gutter',
 		markers: (view) => view.state.field(lintGutterField)
@@ -872,6 +907,10 @@
 			extensions.push(currentLintField, lintGutterField, lintDecorationsField, lintGutter);
 		}
 
+		// Added-line highlight fields are always wired (empty = no decorations) so a consumer
+		// can push ranges AFTER mount (e.g. once a stack is picked) via the reactive dispatch.
+		extensions.push(currentAddedField, addedDecorationsField);
+
 		const state = EditorState.create({
 			doc: value,
 			extensions
@@ -919,6 +958,7 @@
 		if (view) view.dispatch({ effects: updateLintEffect.of(markers) });
 	});
 
+
 	function destroyEditor() {
 		if (markerUpdateTimer) {
 			clearTimeout(markerUpdateTimer);
@@ -940,19 +980,40 @@
 	// Set editor content
 	export function setValue(newValue: string) {
 		if (view) {
+			// Programmatic replace must NOT fire onchange (it is not a user edit). Also clear
+			// any added-line highlight - a plain setValue (cancel merge, env toggle) replaces
+			// the whole doc, so a stale range would highlight the wrong lines.
+			isSyncingExternalValue = true;
 			view.dispatch({
 				changes: {
 					from: 0,
 					to: view.state.doc.length,
 					insert: newValue
-				}
+				},
+				effects: updateAddedEffect.of([])
 			});
+			isSyncingExternalValue = false;
 		}
 	}
 
 	// Focus the editor
 	export function focus() {
 		view?.focus();
+	}
+
+	/**
+	 * Replace the document AND set the added-line highlight in ONE transaction, so the
+	 * green decorations are computed against the new text atomically (a separate reactive
+	 * dispatch races the doc change and lands on the old/empty doc).
+	 */
+	export function setValueWithAddedRanges(newValue: string, ranges: { line: number; endLine: number }[]) {
+		if (!view) return;
+		isSyncingExternalValue = true; // programmatic replace, not a user edit
+		view.dispatch({
+			changes: { from: 0, to: view.state.doc.length, insert: newValue },
+			effects: updateAddedEffect.of(ranges)
+		});
+		isSyncingExternalValue = false;
 	}
 
 	/** Scroll a 1-based line into view and place the cursor on it (used by validate jump-to). */
@@ -1152,6 +1213,12 @@
 	}
 	div :global(.cm-lint-line-info) {
 		background-color: rgba(59, 130, 246, 0.06);
+	}
+
+	/* Freshly-added lines (e.g. a service merged into an existing compose) - green wash + left rail. */
+	div :global(.cm-added-line) {
+		background-color: rgba(34, 197, 94, 0.12);
+		box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.7);
 	}
 
 	/* Variable value overlay widget - base styles */
