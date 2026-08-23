@@ -6,11 +6,15 @@
     "changes": [
       {
         "type": "feature",
+        "text": "MQTT notification channel - publish events to a broker (#280)"
+      },
+      {
+        "type": "feature",
         "text": "TLS backup repositories with a private CA and optional mutual TLS (#1451)"
       },
       {
         "type": "feature",
-        "text": "stack and container icons - pick an icon per stack or per container (survives recreation), plus automatic app logos on containers (#31)"
+        "text": "custom stack and container icons, plus automatic container icons (#31)"
       },
       {
         "type": "feature",
