@@ -18,6 +18,7 @@
 	import { FieldLabel } from '$lib/components/ui/field-label';
 	import { toast } from 'svelte-sonner';
 	import { focusFirstInput } from '$lib/utils';
+	import { backendSupportsTls } from '$lib/shared/repo-predicates';
 
 	interface Destination {
 		id: number;
@@ -264,6 +265,12 @@
 	const selectedBackend = $derived(backendTypes.find(b => b.value === formBackendType) ?? backendTypes[0]);
 	const repoFields = $derived(selectedBackend.fields.filter(f => !f.envKey));
 	const credentialFields = $derived(selectedBackend.fields.filter(f => f.envKey));
+
+	// TLS certs only apply to backends self-hostable over HTTPS with a private CA
+	// (S3/REST); hidden for local/B2/Azure/Google Cloud. See backendSupportsTls.
+	const showTlsSection = $derived(
+		backendSupportsTls(formBackendType, { isEditing, hasStoredCert: hadCacert || hadTlsClientCert })
+	);
 
 	// A field is mandatory unless it opts out (optional) or is a toggle (skipHostKey).
 	function fieldRequired(f: FormField): boolean {
@@ -727,10 +734,11 @@
 			</div>
 		</div>
 
-		<!-- TLS certificates: for any backend that speaks TLS with a private CA (self-hosted
-		     rest-server, MinIO/S3, rclone-over-https). Optional; blank = use the system trust
-		     store, no client cert. Shown for all backend types (someone may run MinIO with a
-		     private CA). PEM content, uploaded or pasted. -->
+		<!-- TLS certificates: only for backends that can be self-hosted over HTTPS with a
+		     private CA - S3 (MinIO/Ceph) and a REST server. A local path has no network, and
+		     B2/Azure/Google Cloud are managed clouds with public CAs, so the section is hidden
+		     there. Optional; blank = use the system trust store. PEM content, uploaded or pasted. -->
+		{#if showTlsSection}
 		<div class="border-t pt-3 mt-2 space-y-3">
 			<span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">TLS certificates (optional)</span>
 			<p class="text-xs text-muted-foreground -mt-1">
@@ -783,6 +791,7 @@
 				</div>
 			</div>
 		</div>
+		{/if}
 
 
 		<!-- Policies section -->
