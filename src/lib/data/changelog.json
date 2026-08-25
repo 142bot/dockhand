@@ -30,7 +30,7 @@
       },
       {
         "type": "feature",
-        "text": "branch selector on git stack, with per-stack branch override (PR#1343, @brx19)"
+        "text": "branch selector on git stack, with per-stack branch override (#649, PR#1343, @brx19)"
       },
       {
         "type": "feature",
