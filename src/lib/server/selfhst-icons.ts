@@ -33,6 +33,16 @@ export function isValidSelfhstRef(ref: string): boolean {
 	return /^[a-z0-9-]{1,64}$/.test(ref);
 }
 
+/**
+ * Clean a client-supplied ref list for the batch endpoint: keep only valid string
+ * refs, de-dupe, and cap the count so one request can't fan out unboundedly. Pure.
+ */
+export function sanitizeRefList(refs: unknown, max: number): string[] {
+	if (!Array.isArray(refs)) return [];
+	const valid = refs.filter((r): r is string => typeof r === 'string' && isValidSelfhstRef(r));
+	return Array.from(new Set(valid)).slice(0, max);
+}
+
 function cacheDir(): string {
 	const dataDir = process.env.DATA_DIR || './data';
 	const dir = resolve(dataDir, 'icon-cache', 'selfhst');

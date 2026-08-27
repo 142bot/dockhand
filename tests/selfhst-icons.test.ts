@@ -7,7 +7,8 @@ import {
 	isValidSelfhstRef,
 	selfhstCachePath,
 	sanitizeSvg,
-	getSelfhstIcon
+	getSelfhstIcon,
+	sanitizeRefList
 } from '../src/lib/server/selfhst-icons';
 import { looksLikeImage } from '../src/lib/server/stack-icons';
 
@@ -140,5 +141,22 @@ describe('getSelfhstIcon cache-hit handling', () => {
 		// The stale tombstone was acted on (dropped then rewritten), i.e. its mtime advanced -
 		// proving it was NOT returned as a still-valid negative-cache hit.
 		if (existsSync(p)) expect(statSync(p).mtimeMs).toBeGreaterThan(before);
+	});
+});
+
+describe('sanitizeRefList (batch endpoint input, #1467)', () => {
+	test('keeps only valid refs, de-dupes, and caps the count', () => {
+		const out = sanitizeRefList(['plex', 'plex', 'Bad Ref', '../etc', 'gitea', 42, null], 10);
+		expect(out).toEqual(['plex', 'gitea']); // dupes + invalid dropped
+	});
+
+	test('caps at the given max', () => {
+		const many = Array.from({ length: 300 }, (_, i) => `icon-${i}`);
+		expect(sanitizeRefList(many, 200)).toHaveLength(200);
+	});
+
+	test('returns [] for a non-array', () => {
+		expect(sanitizeRefList('plex', 10)).toEqual([]);
+		expect(sanitizeRefList(undefined, 10)).toEqual([]);
 	});
 });

@@ -69,6 +69,48 @@
 		).slice(0, 120)
 	);
 
+	// ref -> data: URI for the currently-shown grid. The icons are fetched in ONE
+	// batch request instead of one <img> request per ref, so a WAF (CrowdSec) doesn't
+	// see the grid as crawling and block the client (#1467).
+	let iconData = $state<Record<string, string>>({});
+	let iconsLoading = $state(false);
+	let batchSeq = 0;
+	// Refs already asked for (resolved OR omitted-as-unresolvable). We key `missing`
+	// off THIS, not off iconData, so a ref the batch omits still counts as attempted
+	// and never gets requested again - otherwise the effect (which reads+writes
+	// iconData) would re-fire forever, POSTing the same unresolvable refs in a loop.
+	// It is intentionally a plain Set (non-reactive), so mutating it doesn't retrigger.
+	const attempted = new Set<string>();
+	$effect(() => {
+		const refs = selfhstResults.map((e) => e.Reference);
+		if (refs.length === 0) return;
+		const missing = refs.filter((r) => !attempted.has(r));
+		if (missing.length === 0) return;
+		for (const r of missing) attempted.add(r);
+		const seq = ++batchSeq;
+		iconsLoading = true;
+		fetch('/api/icons/selfhst/batch', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ refs: missing })
+		})
+			.then((r) => (r.ok ? r.json() : { icons: {} }))
+			.then((data: { icons?: Record<string, string> }) => {
+				const icons = data.icons ?? {};
+				if (Object.keys(icons).length > 0) iconData = { ...iconData, ...icons };
+			})
+			.catch(() => {
+				/* leave unresolved refs as placeholder tiles */
+			})
+			.finally(() => {
+				if (seq === batchSeq) iconsLoading = false;
+			});
+	});
+
+	// The first batch is still in flight and no icon has resolved yet -> show a spinner
+	// instead of a grid of empty pulse tiles.
+	const showIconSpinner = $derived(iconsLoading && Object.keys(iconData).length === 0);
+
 	function pickSelfhst(ref: string) {
 		onselect(`selfhst:${ref}`);
 		open = false;
@@ -155,7 +197,12 @@
 							<span class="text-center max-w-sm">{manifestError}</span>
 						</div>
 					{:else}
-						<div class="grid grid-cols-12 gap-1 content-start">
+						{#if showIconSpinner}
+							<div class="flex items-center justify-center gap-2 py-12 text-muted-foreground text-sm">
+								<Loader2 class="w-4 h-4 animate-spin" /> Loading icons...
+							</div>
+						{/if}
+						<div class="grid grid-cols-12 gap-1 content-start" class:hidden={showIconSpinner}>
 							{#each selfhstResults as entry (entry.Reference)}
 								<button
 									type="button"
@@ -163,7 +210,11 @@
 									onclick={() => pickSelfhst(entry.Reference)}
 									class="flex items-center justify-center aspect-square rounded-md border p-1 hover:bg-accent hover:border-primary transition-colors {value === `selfhst:${entry.Reference}` ? 'border-primary bg-accent' : 'border-transparent'}"
 								>
-									<img src="/api/icons/selfhst/{entry.Reference}" alt={entry.Name} loading="lazy" class="w-full h-full object-contain" />
+									{#if iconData[entry.Reference]}
+										<img src={iconData[entry.Reference]} alt={entry.Name} class="w-full h-full object-contain" />
+									{:else}
+										<div class="w-full h-full rounded bg-muted animate-pulse" aria-label={entry.Name}></div>
+									{/if}
 								</button>
 							{/each}
 						</div>
