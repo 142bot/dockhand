@@ -13706,6 +13706,9 @@
           "400": {
             "description": "The id path segment is not a valid integer"
           },
+          "403": {
+            "description": "Caller lacks the git:edit permission"
+          },
           "404": {
             "description": "No repository exists with that ID"
           },
@@ -13769,6 +13772,9 @@
           "400": {
             "description": "The id path segment is not a valid integer"
           },
+          "403": {
+            "description": "Caller lacks the git:view permission"
+          },
           "404": {
             "description": "No repository exists with that ID"
           },
@@ -13829,6 +13835,9 @@
           },
           "400": {
             "description": "The id path segment is not a valid integer"
+          },
+          "403": {
+            "description": "Caller lacks the git:edit permission"
           },
           "404": {
             "description": "No repository exists with that ID"
@@ -13892,6 +13901,9 @@
           },
           "400": {
             "description": "The id path segment is not a valid integer"
+          },
+          "403": {
+            "description": "Caller lacks the git:edit permission"
           },
           "404": {
             "description": "No repository exists with that ID"
@@ -14850,7 +14862,8 @@
             "description": "The deployment triggered by the webhook failed"
           }
         },
-        "security": []
+        "security": [],
+        "description": "A secret is required by default; set ALLOW_WEBHOOKS_WITHOUT_SECRET=true to accept a secret-less trigger on an isolated network."
       },
       "post": {
         "operationId": "post_api_git_webhook_id",
@@ -14908,7 +14921,7 @@
           }
         },
         "security": [],
-        "description": "Public endpoint authenticated by the repository's webhook secret via `X-Hub-Signature-256` (GitHub) or `X-Gitlab-Token` (GitLab); the raw request body is used for HMAC verification."
+        "description": "Public endpoint authenticated by the repository's webhook secret via `X-Hub-Signature-256` (GitHub) or `X-Gitlab-Token` (GitLab); the raw request body is used for HMAC verification. A secret is required by default; set ALLOW_WEBHOOKS_WITHOUT_SECRET=true to accept a secret-less trigger on an isolated network."
       }
     },
     "/api/hawser/connect": {
