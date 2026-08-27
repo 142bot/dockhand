@@ -16,6 +16,7 @@ import {
 	isRepoNotInitializedError,
 	wouldDeleteAllSnapshots,
 	retentionToStore,
+	resolveRetentionForUpdate,
 	validateFlags,
 	validatePolicySchedules,
 	validateRetention,
@@ -688,6 +689,43 @@ describe('retentionToStore', () => {
 	test('no retention and no (or whitespace-only) schedule stores null', () => {
 		expect(retentionToStore(null, null)).toBeNull();
 		expect(retentionToStore(null, '   ')).toBeNull();
+	});
+});
+
+// ============================================================================
+// resolveRetentionForUpdate: partial-update guard. A minimal PUT that omits
+// retention (e.g. pause/resume, which only sends `enabled`) must NOT re-apply
+// the scheduled default and wipe the stored policy (#1462).
+// ============================================================================
+describe('resolveRetentionForUpdate', () => {
+	const SCHED = '0 4 * * *';
+	test('retention omitted and schedule unchanged -> undefined (leave stored value as-is)', () => {
+		// The pause/resume case: body has no retention, schedule not in the body.
+		expect(resolveRetentionForUpdate(undefined, undefined, SCHED)).toBeUndefined();
+	});
+	test('retention omitted but the SAME schedule resent -> still leaves it alone', () => {
+		expect(resolveRetentionForUpdate(undefined, SCHED, SCHED)).toBeUndefined();
+	});
+	test('an explicit retention is stored verbatim', () => {
+		expect(resolveRetentionForUpdate({ keepYearly: 3 }, undefined, SCHED)).toBe(
+			JSON.stringify({ keepYearly: 3 })
+		);
+	});
+	test('adding a schedule with no retention applies the scheduled default', () => {
+		// none -> cron transition: the default-injection the helper exists for.
+		expect(resolveRetentionForUpdate(undefined, SCHED, null)).toBe(
+			JSON.stringify({ keepDaily: 7, keepWeekly: 4, keepMonthly: 6 })
+		);
+	});
+	test('clearing to all-zero on a SCHEDULED config falls back to the default (no unbounded growth)', () => {
+		// retention is provided (so not skipped), but empty; with a schedule present the
+		// scheduled default applies rather than storing "no policy".
+		expect(resolveRetentionForUpdate({ keepLast: 0 }, undefined, SCHED)).toBe(
+			JSON.stringify({ keepDaily: 7, keepWeekly: 4, keepMonthly: 6 })
+		);
+	});
+	test('clearing to all-zero on an UNSCHEDULED config stores null', () => {
+		expect(resolveRetentionForUpdate({ keepLast: 0 }, undefined, null)).toBeNull();
 	});
 });
 

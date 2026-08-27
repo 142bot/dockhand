@@ -504,6 +504,25 @@ export function retentionToStore(retention: any, schedule: unknown): string | nu
 }
 
 /**
+ * Resolve the retention value to persist on a PARTIAL config update. `undefined` means
+ * "leave the stored retention untouched" (the caller must skip the field). A minimal PUT
+ * that only flips `enabled` (pause/resume) omits `retention`, so re-applying the scheduled
+ * default here would silently wipe the user's policy (#1462). The default is applied ONLY
+ * when the retention is actually provided, or when the schedule is being added/changed -
+ * the transition the default exists to cover.
+ */
+export function resolveRetentionForUpdate(
+	retention: unknown,
+	newSchedule: unknown,
+	existingSchedule: unknown
+): string | null | undefined {
+	const retentionProvided = retention !== undefined;
+	const scheduleChanged = newSchedule !== undefined && newSchedule !== existingSchedule;
+	if (!retentionProvided && !scheduleChanged) return undefined; // leave stored value as-is
+	return retentionToStore(retention, newSchedule ?? existingSchedule);
+}
+
+/**
  * Decide the `enabled` flag when a backup config is updated. A "run once" backup persists a
  * MANUAL, paused config (schedule=null, enabled=false); adding a cron schedule later should make
  * it actually run, so a manual -> scheduled transition auto-enables it. A config that was ALREADY

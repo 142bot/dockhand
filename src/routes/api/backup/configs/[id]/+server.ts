@@ -8,7 +8,7 @@ import {
 } from '$lib/server/db';
 import { registerSchedule, unregisterSchedule, isValidCron } from '$lib/server/scheduler';
 import { isBackupRunning } from '$lib/server/backups';
-import { validateRetention, retentionToStore, resolveEnabledOnScheduleChange } from '$lib/server/backups/helpers';
+import { validateRetention, resolveRetentionForUpdate, resolveEnabledOnScheduleChange } from '$lib/server/backups/helpers';
 import { requireBackups, loadConfigGateEnv } from '$lib/server/backups/route-guards';
 
 /**
@@ -99,11 +99,11 @@ export const PUT: RequestHandler = async (event) => {
 			selectedVolumes: body.selectedVolumes ? JSON.stringify(body.selectedVolumes) : body.selectedVolumes,
 			stopBeforeBackup: body.stopBeforeBackup,
 			schedule: body.schedule,
-			// Apply the default scheduled retention the same way create does, so a
-			// config edited to add a schedule with no explicit retention doesn't end
-			// up with pruning disabled and an unbounded-growth repo. Uses the effective
-			// schedule (the incoming one, or the existing one if unchanged).
-			retention: retentionToStore(body.retention, body.schedule ?? existing.schedule),
+			// Leave the stored retention untouched when the client didn't send it and the
+			// schedule isn't changing - a minimal pause/resume PUT (only `enabled`) must not
+			// wipe the user's policy (#1462). The scheduled default is still applied when
+			// retention is provided or a schedule is being added/changed.
+			retention: resolveRetentionForUpdate(body.retention, body.schedule, existing.schedule),
 			options: body.options ? JSON.stringify(body.options) : body.options,
 			tags: body.tags ? JSON.stringify(body.tags) : body.tags
 		});
