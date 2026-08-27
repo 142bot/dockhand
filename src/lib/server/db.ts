@@ -1358,9 +1358,11 @@ export async function updateAuthSettings(data: Partial<AuthSettingsData>): Promi
 	if (data.authEnabled !== undefined) updateData.authEnabled = data.authEnabled;
 	if (data.defaultProvider !== undefined) updateData.defaultProvider = data.defaultProvider;
 	if (data.sessionTimeout !== undefined) {
-		// Cap session timeout to safe maximum (30 days)
+		// 0 is the "never expire" sentinel (#1302); otherwise clamp 1s..30 days.
 		const MAX_SESSION_TIMEOUT = 2592000; // 30 days in seconds
-		updateData.sessionTimeout = Math.min(Math.max(1, data.sessionTimeout), MAX_SESSION_TIMEOUT);
+		updateData.sessionTimeout = data.sessionTimeout === 0
+			? 0
+			: Math.min(Math.max(1, data.sessionTimeout), MAX_SESSION_TIMEOUT);
 	}
 
 	// Get existing row's id (may not be 1 after db reset/migration)
@@ -1440,6 +1442,17 @@ export async function hasAdminUser(): Promise<boolean> {
 		.from(userRoles)
 		.where(eq(userRoles.roleId, adminRole[0].id))
 		.limit(1);
+	return result.length > 0;
+}
+
+/**
+ * Whether any user account exists at all. Used to bound the "create the first account
+ * with no auth" allowance to a genuine first run - once ANY user exists, account
+ * creation goes through the normal authenticated path. (hasAdminUser only tracks the
+ * Admin role, which can be absent while user rows still exist.)
+ */
+export async function hasAnyUser(): Promise<boolean> {
+	const result = await db.select({ id: users.id }).from(users).limit(1);
 	return result.length > 0;
 }
 

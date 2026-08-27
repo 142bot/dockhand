@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Dockhand API",
-    "version": "1.0.44",
+    "version": "1.0.45",
     "description": "Auto-generated from src/routes/**/+server.ts by scripts/generate-openapi.ts. Path, HTTP method, tag, and auth requirement are derived automatically from the route tree and hooks.server.ts PUBLIC_PATHS. Parameters, response status codes, and request body fields are additionally auto-detected from each handler’s own source (query params via url.searchParams, status codes via status:/error(), body fields via destructuring) — adding a new endpoint therefore requires ZERO manual spec edits to show up with real params/responses. An optional, additive `@openapi` JSDoc annotation on a handler replaces the generic auto-descriptions with hand-written summaries, exact types, and examples."
   },
   "servers": [
@@ -2537,6 +2537,7 @@
           }
         },
         "security": [],
+        "description": "sessionTimeout is in seconds (clamped 3600..604800); 0 disables expiry so sessions never time out.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2549,12 +2550,16 @@
                   },
                   "defaultProvider": {
                     "type": "string"
+                  },
+                  "sessionTimeout": {
+                    "type": "integer"
                   }
                 }
               },
               "example": {
                 "authEnabled": true,
-                "defaultProvider": "local"
+                "defaultProvider": "local",
+                "sessionTimeout": 86400
               }
             }
           }
@@ -10170,7 +10175,7 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Environments accessible to the caller (filtered by RBAC in Enterprise mode; all environments in Free edition)",
+            "description": "Environments accessible to the caller (filtered by RBAC in Enterprise mode; all environments in Free edition). The tlsKey (private TLS client key) and hawserToken secrets are NEVER returned; hasTlsKey / hasHawserToken indicate whether one is stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10204,6 +10209,12 @@
                       },
                       "timezone": {
                         "type": "string"
+                      },
+                      "hasTlsKey": {
+                        "type": "boolean"
+                      },
+                      "hasHawserToken": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -10223,7 +10234,9 @@
                     "protocol": "http",
                     "icon": "server",
                     "publicIp": "203.0.113.10",
-                    "timezone": "Europe/Berlin"
+                    "timezone": "Europe/Berlin",
+                    "hasTlsKey": false,
+                    "hasHawserToken": false
                   },
                   {
                     "id": 2,
@@ -10234,7 +10247,9 @@
                     "protocol": "http",
                     "icon": "server",
                     "publicIp": null,
-                    "timezone": "Europe/Berlin"
+                    "timezone": "Europe/Berlin",
+                    "hasTlsKey": false,
+                    "hasHawserToken": true
                   }
                 ]
               }
@@ -10386,7 +10401,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "The tlsKey (private TLS client key) and hawserToken secrets are NEVER returned; hasTlsKey / hasHawserToken indicate whether one is stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10409,6 +10424,12 @@
                     },
                     "publicIp": {
                       "type": "string"
+                    },
+                    "hasTlsKey": {
+                      "type": "boolean"
+                    },
+                    "hasHawserToken": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -10424,7 +10445,9 @@
                   "labels": [
                     "string"
                   ],
-                  "publicIp": "string"
+                  "publicIp": "string",
+                  "hasTlsKey": true,
+                  "hasHawserToken": true
                 }
               }
             }
@@ -10467,7 +10490,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "The tlsKey/hawserToken secrets are NEVER returned; hasTlsKey / hasHawserToken indicate whether one is stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10490,6 +10513,12 @@
                     },
                     "publicIp": {
                       "type": "string"
+                    },
+                    "hasTlsKey": {
+                      "type": "boolean"
+                    },
+                    "hasHawserToken": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -10505,7 +10534,9 @@
                   "labels": [
                     "string"
                   ],
-                  "publicIp": "string"
+                  "publicIp": "string",
+                  "hasTlsKey": true,
+                  "hasHawserToken": true
                 }
               }
             }
@@ -15498,13 +15529,10 @@
         ],
         "responses": {
           "200": {
-            "description": "Raw image/svg+xml body, Cache-Control public max-age=604800"
+            "description": "Raw image/svg+xml body (the icon, or a neutral placeholder if it can't be resolved), Cache-Control public max-age=604800"
           },
           "400": {
             "description": "The ref is not a valid selfh.st reference"
-          },
-          "404": {
-            "description": "No such icon (invalid ref or upstream fetch failed)"
           }
         },
         "security": [
@@ -15515,7 +15543,82 @@
             "bearerAuth": []
           }
         ],
-        "description": "Proxies an icon from the selfh.st collection so the browser never contacts an external CDN directly. The first request for a given ref fetches the SVG from jsdelivr and caches it under DATA_DIR; later requests are served locally. Icons are CC BY 4.0 (selfh.st). Returns 404 if the ref is invalid or the icon can't be fetched, so the UI falls back to a generic icon."
+        "description": "Proxies an icon from the selfh.st collection so the browser never contacts an external CDN directly. The first request for a given ref fetches the SVG from jsdelivr and caches it under DATA_DIR; later requests are served locally. Icons are CC BY 4.0 (selfh.st). When the icon can't be resolved it returns a neutral placeholder SVG (200) rather than a 404, so a grid of icons doesn't read as probing to a WAF."
+      }
+    },
+    "/api/icons/selfhst/batch": {
+      "post": {
+        "operationId": "post_api_icons_selfhst_batch",
+        "tags": [
+          "icons"
+        ],
+        "summary": "Resolve multiple selfh.st app icons in one request (avoids per-icon requests a WAF flags as crawling)",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "icons maps each resolved reference to a data:image/svg+xml base64 URI; unresolvable refs are omitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "icons": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "icons"
+                  ]
+                },
+                "example": {
+                  "icons": {
+                    "plex": "data:image/svg+xml;base64,PHN2Zy4uLg=="
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request body is missing a refs array"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Takes a list of selfh.st icon references and returns each resolved icon as a data:image/svg+xml URI, keyed by reference. Unresolvable or invalid refs are omitted rather than returned as errors. Each icon is fetched from the CDN once and cached on disk, same as the single-icon endpoint.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "refs"
+                ]
+              },
+              "example": {
+                "refs": [
+                  "plex",
+                  "gitea",
+                  "grafana"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/icons/selfhst-manifest": {
@@ -27088,6 +27191,9 @@
                       },
                       "projectUrl": {
                         "type": "string"
+                      },
+                      "detailsUrl": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -27645,6 +27751,9 @@
           "400": {
             "description": "Missing username/password, or password shorter than 8 characters"
           },
+          "401": {
+            "description": "Authentication required (auth is enabled and the caller is not authenticated; the first admin during initial setup is exempt)"
+          },
           "403": {
             "description": "Permission denied (RBAC 'users:create' missing — only applies once an admin already exists)"
           },
@@ -27887,6 +27996,9 @@
           "400": {
             "description": "User id is required, or the new password is shorter than 8 characters"
           },
+          "401": {
+            "description": "Authentication required (auth is enabled and the caller is not authenticated)"
+          },
           "403": {
             "description": "Permission denied (editing another user without users:edit)"
           },
@@ -28000,6 +28112,9 @@
           },
           "400": {
             "description": "User id is required"
+          },
+          "401": {
+            "description": "Authentication required (auth is enabled and the caller is not authenticated)"
           },
           "403": {
             "description": "Permission denied (missing users:remove)"

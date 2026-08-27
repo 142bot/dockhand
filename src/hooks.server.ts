@@ -1,6 +1,6 @@
 // v1.0.12
 import '$lib/server/dns-dispatcher.js';
-import { initDatabase, hasAdminUser } from '$lib/server/db';
+import { initDatabase, hasAnyUser } from '$lib/server/db';
 import { startSubprocesses, stopSubprocesses } from '$lib/server/subprocess-manager';
 import { startScheduler } from '$lib/server/scheduler';
 import { isAuthEnabled, validateSession } from '$lib/server/auth';
@@ -281,8 +281,11 @@ function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PATHS.some(path => pathname === path || pathname.startsWith(path + '/'));
 }
 
-// Check if path is a static asset
+// True only for real static files. API routes are never static, even when a path
+// ends in an asset-like extension (a route parameter can), so they always go through
+// the normal request handling below.
 function isStaticAsset(pathname: string): boolean {
+	if (pathname.startsWith('/api/')) return false;
 	return pathname.startsWith('/_app/') ||
 		pathname.startsWith('/favicon') ||
 		pathname.endsWith('.webp') ||
@@ -377,10 +380,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 		// If not authenticated
 		if (!user) {
-			// Special case: allow user creation when auth is enabled but no admin exists yet
-			// This enables the first admin user to be created during initial setup
-			const noAdminSetupMode = !(await hasAdminUser());
-			if (noAdminSetupMode && event.url.pathname === '/api/users' && event.request.method === 'POST') {
+			// Initial setup only: allow creating the very first account when NO user exists
+			// yet (there is no one to authenticate as). Once any account exists, creation
+			// goes through the normal authenticated path. Bounding this on any-user (not the
+			// Admin role) keeps it from reopening when accounts exist but no admin does.
+			const firstRunSetup = !(await hasAnyUser());
+			if (firstRunSetup && event.url.pathname === '/api/users' && event.request.method === 'POST') {
 				return requestContext.run(ctx, async () => compressResponse(event.request, await resolve(event)));
 			}
 

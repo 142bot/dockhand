@@ -82,6 +82,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
  * resp-201-desc: The first user ever created (or every user in Free edition) automatically gets the Admin role
  * resp-201-example: {"id":1,"username":"jdoe","email":"jdoe@example.com","isAdmin":true}
  * resp-400: Missing username/password, or password shorter than 8 characters
+ * resp-401: Authentication required (auth is enabled and the caller is not authenticated; the first admin during initial setup is exempt)
  * resp-403: Permission denied (RBAC 'users:create' missing — only applies once an admin already exists)
  * resp-409: Username already exists
  * resp-500: Unexpected error while creating the user
@@ -90,9 +91,13 @@ export const POST: RequestHandler = async (event) => {
 	const { request, cookies } = event;
 	const auth = await authorize(cookies);
 
-	// When auth is enabled and user is logged in, check they can manage users
-	// (allow if no user logged in for initial setup when no users exist)
-	if (auth.authEnabled && auth.isAuthenticated && !await auth.canManageUsers()) {
+	// When auth is enabled, a caller must be authenticated and allowed to manage users.
+	// Initial setup runs with auth disabled (the first admin is created then), so that
+	// path is unaffected.
+	if (auth.authEnabled && !auth.isAuthenticated) {
+		return json({ error: 'Authentication required' }, { status: 401 });
+	}
+	if (auth.authEnabled && !await auth.canManageUsers()) {
 		return json({ error: 'Permission denied' }, { status: 403 });
 	}
 
@@ -111,7 +116,7 @@ export const POST: RequestHandler = async (event) => {
 		// Hash password
 		const passwordHash = await hashPassword(password);
 
-		// Check if this is the first user
+		// The first user (no Admin-role user yet) is auto-assigned the Admin role below.
 		const isFirstUser = !(await hasAdminUser());
 
 		// Create user
