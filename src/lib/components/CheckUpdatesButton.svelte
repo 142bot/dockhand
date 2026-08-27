@@ -133,7 +133,7 @@
 			// Semver suggestions are independent of digest updates: a container can be
 			// digest-current yet run an outdated version tag.
 			const newerVersions: NewerVersionItem[] = data.results
-				.filter((r: any) => r.newerVersion)
+				.filter((r: any) => r.newerVersion && !r.systemContainer && !r.updateDisabled)
 				.map((r: any) => ({ containerId: r.containerId, newerVersion: r.newerVersion }));
 
 			// A newer version tag is a real result even when no digest update exists,

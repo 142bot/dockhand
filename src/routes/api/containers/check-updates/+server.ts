@@ -150,9 +150,15 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 
 				const result = await checkImageUpdateAvailable(imageName, currentImageId, envIdNum);
 
+				// System containers (Dockhand itself, Hawser) have their own update path and are
+				// never shown/counted as a container update, so skip the extra registry call and
+				// never emit a newerVersion for them - otherwise the "found updates" notification
+				// counts a suggestion the UI deliberately hides (#1466).
+				const systemContainer = isSystemContainer(imageName) || null;
+
 				// Newer-version-tag detection (opt-in). Skips instantly for floating tags,
 				// so it only hits the registry for pinned versions. Never throws.
-				const newerVersion = semverEnabled
+				const newerVersion = semverEnabled && !systemContainer
 					? await checkNewerVersion(imageName, {
 							...semverOptions,
 							versionPattern: getVersionPatternOverride(inspectData.Config?.Labels)
@@ -168,7 +174,7 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 					newDigest: result.registryDigest,
 					error: result.error,
 					isLocalImage: result.isLocalImage,
-					systemContainer: isSystemContainer(imageName) || null,
+					systemContainer,
 					updateDisabled,
 					newerVersion: newerVersion ?? undefined
 				};
