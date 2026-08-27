@@ -106,8 +106,9 @@
 	// Track change detection for stat highlighting (UI-only, stays in component)
 	let changedFields = $state<Map<string, Set<string>>>(new Map());
 
-	type SortField = 'name' | 'image' | 'state' | 'health' | 'uptime' | 'stack' | 'ip' | 'cpu' | 'memory' | 'ports';
+	type SortField = 'name' | 'image' | 'state' | 'health' | 'uptime' | 'stack' | 'ip' | 'cpu' | 'memory' | 'ports' | 'diskRead' | 'diskWrite' | 'netRx' | 'netTx';
 	type SortDirection = 'asc' | 'desc';
+
 
 	// Data from persistent store (survives page navigation)
 	const containers = $derived($containerStore.data);
@@ -862,6 +863,18 @@
 					const memB = containerStats.get(b.id)?.memoryUsage ?? -1;
 					cmp = memA - memB;
 					break;
+				case 'diskRead':
+					cmp = (containerStats.get(a.id)?.blockRead ?? -1) - (containerStats.get(b.id)?.blockRead ?? -1);
+					break;
+				case 'diskWrite':
+					cmp = (containerStats.get(a.id)?.blockWrite ?? -1) - (containerStats.get(b.id)?.blockWrite ?? -1);
+					break;
+				case 'netRx':
+					cmp = (containerStats.get(a.id)?.networkRx ?? -1) - (containerStats.get(b.id)?.networkRx ?? -1);
+					break;
+				case 'netTx':
+					cmp = (containerStats.get(a.id)?.networkTx ?? -1) - (containerStats.get(b.id)?.networkTx ?? -1);
+					break;
 			}
 			// Secondary sort by name for stability when primary values are equal
 			if (cmp === 0 && sortField !== 'name') {
@@ -1366,6 +1379,7 @@
 			sortDirection = field === 'state' ? 'asc' : 'asc';
 		}
 	}
+
 
 
 	// Handle tab visibility changes (e.g., user switches back from another tab)

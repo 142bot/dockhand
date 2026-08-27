@@ -201,6 +201,10 @@ export interface ColumnConfig {
 	grow?: boolean; // If true, column expands to fill remaining space
 	noTruncate?: boolean; // If true, content won't be truncated with ellipsis
 	hint?: string; // Tooltip on column header
+	defaultVisible?: boolean; // If false, column is hidden by default (user can enable it in preferences)
+	// A column holding two metrics (e.g. Disk I/O = read/write) cycles a header click
+	// through these (sortField, direction) states instead of a plain asc/desc toggle (#1111).
+	sortCycle?: { field: string; direction: 'asc' | 'desc' }[];
 }
 
 export interface ColumnPreference {
