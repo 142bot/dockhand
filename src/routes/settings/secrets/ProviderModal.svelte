@@ -30,6 +30,7 @@
 		{ value: 'bitwarden', label: 'Bitwarden Secrets Manager' },
 		{ value: 'proton', label: 'Proton Pass' },
 		{ value: 'azure-kv', label: 'Azure Key Vault' },
+		{ value: 'keepass', label: 'KeePassXC' },
 	];
 
 	// Config fields per provider type, matching the config shapes in
@@ -78,6 +79,11 @@
 			{ key: 'clientId', label: 'Client ID', type: 'text', required: true, placeholder: 'application (client) ID', hint: 'The service-principal (app registration) client ID.' },
 			{ key: 'clientSecret', label: 'Client secret', type: 'password', required: true, placeholder: 'app registration client secret', hint: 'A client secret for the app registration, with Get/List secret permission on the vault.' },
 		],
+		keepass: [
+			{ key: 'databasePath', label: 'Database path', type: 'text', required: true, placeholder: '/secrets/passwords.kdbx', hint: 'Absolute path to the .kdbx file as seen inside the Dockhand container (bind-mount it read-only). keepassxc-cli must be installed in the container.' },
+			{ key: 'password', label: 'Master password', type: 'password', required: false, requiredWhen: (c) => !(c.keyFilePath ?? '').trim(), placeholder: 'database master password', hint: 'The database master password. Optional if a key file is provided instead (or in addition).' },
+			{ key: 'keyFilePath', label: 'Key file path', type: 'text', required: false, placeholder: '/secrets/db.keyx', hint: 'Optional absolute path to the database key file, as seen inside the container.' },
+		],
 	};
 
 	export function providerTypeLabel(type: string): string {
@@ -119,6 +125,11 @@
 			label: 'Key Vault',
 			placeholder: 'any value enables bulk pull',
 			hint: 'Bulk-load every secret in the vault. Set any value to enable it; leave blank to inject only inline azurekv:// references.'
+		},
+		'keepass': {
+			label: 'Group',
+			placeholder: 'e.g. dockhand (leave blank for inline refs only)',
+			hint: 'Bulk-load every entry under this group as ENV=<entry password>. Leave blank to inject only inline keepass:// references.'
 		}
 	};
 </script>
@@ -449,7 +460,7 @@
 					</div>
 				{/each}
 			</div>
-			{#if formType === 'bitwarden' || formType === 'proton'}
+			{#if formType === 'bitwarden' || formType === 'proton' || formType === 'keepass'}
 				<!-- Fixed min-height so switching between the bitwarden (shorter) and proton
 				     (taller) external-CLI notes doesn't jump the dialog's vertical size. -->
 				<div class="min-h-16">
@@ -460,6 +471,17 @@
 								Bitwarden Secrets Manager requires an externally installed or mounted official
 								<code>bws</code> client at <code>/usr/local/bin/bws</code> (or an absolute
 								<code>DOCKHAND_BWS_PATH</code> process override).
+							</span>
+						</p>
+					{:else if formType === 'keepass'}
+						<p class="flex items-start gap-2 text-xs text-muted-foreground">
+							<Info class="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+							<span>
+								KeePassXC requires the official <code>keepassxc-cli</code> client installed in the
+								container (or an absolute <code>DOCKHAND_KEEPASSXC_CLI_PATH</code> process override),
+								and the <code>.kdbx</code> database bind-mounted into the container read-only at the
+								path above. Supports both a bulk group pull and inline <code>keepass://</code>
+								references.
 							</span>
 						</p>
 					{:else}

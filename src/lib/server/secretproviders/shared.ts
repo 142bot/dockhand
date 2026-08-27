@@ -34,6 +34,7 @@ export type SecretProviderType =
 	| 'bitwarden'
 	| 'proton'
 	| 'azure-kv'
+	| 'keepass'
 	// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 	| (string & {});
 
@@ -212,6 +213,15 @@ export interface AzureKvConfig {
 	clientSecret: string;
 }
 
+export interface KeePassConfig {
+	/** Absolute path to the `.kdbx` database, as seen inside the Dockhand container. */
+	databasePath: string;
+	/** Master password for the database (encrypted at rest). Optional if a key file is set. */
+	password?: string;
+	/** Absolute path to an optional key file, as seen inside the container. */
+	keyFilePath?: string;
+}
+
 /** Persisted (encrypted) config, discriminated by the provider `type`. */
 export type SecretProviderConfig =
 	| ServiceAccountConfig
@@ -221,7 +231,8 @@ export type SecretProviderConfig =
 	| DopplerConfig
 	| BitwardenConfig
 	| ProtonConfig
-	| AzureKvConfig;
+	| AzureKvConfig
+	| KeePassConfig;
 
 /**
  * Config keys that hold a SECRET across every provider type. Only these are stripped
@@ -230,7 +241,7 @@ export type SecretProviderConfig =
  * a non-secret coordinate the user needs to see and edit. Keep in sync with the
  * `type: 'password'` fields in ProviderModal.svelte's PROVIDER_FIELDS.
  */
-export const SECRET_CONFIG_KEYS = new Set(['token', 'clientSecret']);
+export const SECRET_CONFIG_KEYS = new Set(['token', 'clientSecret', 'password']);
 
 /**
  * A masked secret key that only makes sense alongside a non-secret partner field, as a
