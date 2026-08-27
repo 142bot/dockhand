@@ -331,17 +331,13 @@ export const keepassProvider: SecretProvider<KeePassConfig> = {
 					.map((l) => l.replace(/\r$/, '')) // strip only CR, not a legit trailing space in a title
 					.filter((l) => l.length > 0 && !l.endsWith('/')); // drop group lines
 			} catch (error: unknown) {
-				// An OPERATIONAL failure (timeout, output-limit kill, spawn error) does NOT
-				// mean the group is empty - swallowing it would deploy a stack with blank
-				// secrets while reporting success. Always propagate it (fail the deploy).
+				// A non-zero `ls` means either the group does not exist OR the database could
+				// not be opened (wrong password after a rotation, corrupt/unreadable db). We
+				// can't tell them apart reliably (same exit code, locale-dependent stderr), and
+				// both should FAIL the deploy rather than silently bring a stack up with blank
+				// secrets. The message names both possibilities.
 				if (error instanceof KeePassCliError && error.operational) throw error;
-				// With a GROUP selector, a non-operational ls failure (the command ran and
-				// exited non-zero) is almost always "group not found" - a mistyped selector
-				// must NOT fail the whole deploy, so treat it as no secrets. With NO selector
-				// (whole db) it's a real db/credentials error and propagates to the outer catch.
-				if (!group) throw error;
-				console.warn(`KeePassXC bulk group "${group}" did not list (treated as empty): ${sanitizedError(error)}`);
-				return Object.create(null) as Record<string, string>;
+				throw new KeePassCliError(nonZeroExitMessage('ls'), true);
 			} finally {
 				listOut?.fill(0);
 			}
