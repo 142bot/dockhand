@@ -109,7 +109,10 @@
 		protocol: string;
 		tlsCa?: string;
 		tlsCert?: string;
-		tlsKey?: string;
+		// tlsKey / hawserToken are never returned by the API (write-only secrets); the
+		// has* flags say whether one is stored.
+		hasTlsKey?: boolean;
+		hasHawserToken?: boolean;
 		tlsSkipVerify?: boolean;
 		icon?: string;
 		socketPath?: string;
@@ -122,6 +125,7 @@
 		hawserAgentName?: string;
 		hawserVersion?: string;
 		hawserCapabilities?: string;
+		labels?: string;
 		publicIp?: string;
 		createdAt: string;
 		updatedAt: string;
@@ -281,6 +285,9 @@
 	let formTlsCa = $state('');
 	let formTlsCert = $state('');
 	let formTlsKey = $state('');
+	// Whether the environment already has a stored tlsKey (the value itself is never
+	// returned by the API). Drives the "leave blank to keep" hint on the field.
+	let hasStoredTlsKey = $state(false);
 	let formTlsSkipVerify = $state(false);
 	let formIcon = $state('globe');
 	let pendingIconData = $state<string | null>(null);
@@ -303,6 +310,8 @@
 	const usesStackPath = (ct: ConnectionType) => ct === 'direct' || ct === 'hawser-standard' || ct === 'hawser-edge';
 	const isHawserConn = (ct: ConnectionType) => ct === 'hawser-standard' || ct === 'hawser-edge';
 	let formHawserToken = $state('');
+	// Whether a hawser token is already stored (value never returned by the API).
+	let hasStoredHawserToken = $state(false);
 	let formLabels = $state<string[]>([]);
 	let newLabelInput = $state('');
 	let showLabelDropdown = $state(false);
@@ -578,7 +587,11 @@
 			formProtocol = environment.protocol;
 			formTlsCa = environment.tlsCa || '';
 			formTlsCert = environment.tlsCert || '';
-			formTlsKey = environment.tlsKey || '';
+			// The API never returns the tlsKey / hawserToken secrets (they're stripped
+			// server-side). Start blank and remember whether one is stored so the field
+			// can say "leave blank to keep"; a blank submit keeps the existing secret.
+			formTlsKey = '';
+			hasStoredTlsKey = !!environment.hasTlsKey;
 			formTlsSkipVerify = environment.tlsSkipVerify ?? false;
 			formIcon = environment.icon || 'globe';
 			formSocketPath = environment.socketPath || '/var/run/docker.sock';
@@ -586,7 +599,8 @@
 			formCollectMetrics = environment.collectMetrics ?? true;
 			formHighlightChanges = environment.highlightChanges ?? true;
 			formConnectionType = (environment.connectionType as ConnectionType) || 'socket';
-			formHawserToken = environment.hawserToken || '';
+			formHawserToken = '';
+			hasStoredHawserToken = !!environment.hasHawserToken;
 			formLabels = parseLabels(environment.labels);
 			newLabelInput = '';
 			formPublicIp = environment.publicIp || '';
@@ -620,6 +634,7 @@
 			formTlsCa = '';
 			formTlsCert = '';
 			formTlsKey = '';
+			hasStoredTlsKey = false;
 			formTlsSkipVerify = false;
 			formIcon = 'globe';
 			pendingIconData = null;
@@ -633,6 +648,7 @@
 			formDiskWarningThresholdGb = 50;
 			formConnectionType = 'socket';
 			formHawserToken = '';
+			hasStoredHawserToken = false;
 			formLabels = [];
 			newLabelInput = '';
 			formPublicIp = '';
@@ -2137,7 +2153,7 @@
 										<textarea
 											id="edit-env-tls_key"
 											bind:value={formTlsKey}
-											placeholder="-----BEGIN PRIVATE KEY-----"
+											placeholder={hasStoredTlsKey ? 'Configured - leave blank to keep, or paste a new key to replace it' : '-----BEGIN PRIVATE KEY-----'}
 											class="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 										></textarea>
 									</div>
@@ -2245,7 +2261,7 @@
 										</Button>
 									{/if}
 								</div>
-								<Input id="edit-env-hawser-token" type="password" bind:value={formHawserToken} placeholder="Token for agent authentication" oninput={() => generatedStandardToken = null} />
+								<Input id="edit-env-hawser-token" type="password" bind:value={formHawserToken} placeholder={hasStoredHawserToken ? 'Configured - leave blank to keep, or enter a new token to replace it' : 'Token for agent authentication'} oninput={() => generatedStandardToken = null} />
 								{#if generatedStandardToken}
 									<div class="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 rounded-md space-y-2">
 										<p class="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">

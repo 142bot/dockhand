@@ -9,13 +9,14 @@ import { resetHostDetection, detectHostDataDir } from '$lib/server/host-path';
 import { serializeLabels, parseLabels, MAX_LABELS } from '$lib/utils/label-colors';
 import { cleanPem } from '$lib/utils/pem';
 import { validateEnvName } from '$lib/utils/env-name';
+import { redactEnvironment } from '$lib/server/environment-redact';
 
 /**
  * @openapi
  * summary: List all Docker environments (hosts) known to Dockhand
- * resp-200: array<{id:integer!, name:string!, connectionType:string!, host:string, port:integer, protocol:string, icon:string, publicIp:string, timezone:string}>
- * resp-200-desc: Environments accessible to the caller (filtered by RBAC in Enterprise mode; all environments in Free edition)
- * resp-200-example: [{"id":1,"name":"hhdocker01","connectionType":"socket","host":null,"port":2375,"protocol":"http","icon":"server","publicIp":"203.0.113.10","timezone":"Europe/Berlin"},{"id":2,"name":"hhdocker02","connectionType":"hawser-edge","host":null,"port":2375,"protocol":"http","icon":"server","publicIp":null,"timezone":"Europe/Berlin"}]
+ * resp-200: array<{id:integer!, name:string!, connectionType:string!, host:string, port:integer, protocol:string, icon:string, publicIp:string, timezone:string, hasTlsKey:boolean, hasHawserToken:boolean}>
+ * resp-200-desc: Environments accessible to the caller (filtered by RBAC in Enterprise mode; all environments in Free edition). The tlsKey (private TLS client key) and hawserToken secrets are NEVER returned; hasTlsKey / hasHawserToken indicate whether one is stored.
+ * resp-200-example: [{"id":1,"name":"hhdocker01","connectionType":"socket","host":null,"port":2375,"protocol":"http","icon":"server","publicIp":"203.0.113.10","timezone":"Europe/Berlin","hasTlsKey":false,"hasHawserToken":false},{"id":2,"name":"hhdocker02","connectionType":"hawser-edge","host":null,"port":2375,"protocol":"http","icon":"server","publicIp":null,"timezone":"Europe/Berlin","hasTlsKey":false,"hasHawserToken":true}]
  * resp-403: Permission denied (RBAC 'environments:view' missing)
  * resp-500: Unexpected error while loading environments
  */
@@ -55,7 +56,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			const timezone = await getEnvironmentTimezone(env.id);
 			const imagePruneSettings = await getImagePruneSettings(env.id);
 			return {
-				...env,
+				...redactEnvironment(env),
 				labels: parseLabels(env.labels as string | null),
 				publicIp: publicIps[env.id.toString()] || null,
 				updateCheckEnabled: updateSettings?.enabled || false,
@@ -172,7 +173,7 @@ export const POST: RequestHandler = async (event) => {
 		// Audit log
 		await auditEnvironment(event, 'create', env.id, env.name);
 
-		return json(env);
+		return json(redactEnvironment(env));
 	} catch (error) {
 		console.error('Failed to create environment:', error);
 		return json({ error: 'Failed to create environment' }, { status: 500 });
