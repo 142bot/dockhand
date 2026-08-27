@@ -59,35 +59,89 @@ export function isSafeNotificationUrl(raw: string): { ok: boolean; reason?: stri
 export type IpCategory = 'loopback' | 'metadata' | 'private' | 'reserved';
 
 /**
- * Extract the embedded IPv4 dotted-quad from an IPv4-mapped/compatible IPv6 host,
- * or null. `new URL()` normalizes `::ffff:1.2.3.4` to the HEX form `::ffff:102:304`,
- * so a regex on the dotted form alone is dead on the real code path — every mapped
- * address must be canonicalized from its hextets. Handles the compressed
- * `::ffff:HHHH:HHHH`, the fully-expanded `0:0:0:0:0:ffff:HHHH:HHHH`, the
- * `::ffff:0:HHHH:HHHH` (v4-translated), and the deprecated IPv4-compatible
- * `::HHHH:HHHH` / `::a.b.c.d`. The last two 16-bit hextets carry the 32-bit v4.
+ * Expand an IPv6 literal to exactly 8 numeric hextets, or null if it is not a
+ * parseable IPv6 address. `new URL()` normalizes and compresses (`::`) v6 hosts, so
+ * embedded-v4 extraction must work off the FULL hextet vector, not the compressed
+ * text. A trailing dotted quad (`::ffff:1.2.3.4`) is folded into its two hextets.
+ */
+function expandV6(h: string): number[] | null {
+	if (!h.includes(':')) return null;
+	let s = h;
+	// Fold a trailing dotted IPv4 (v4-mapped/compatible) into two hextets first.
+	const dotted = s.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (dotted) {
+		const [a, b, c, d] = [Number(dotted[2]), Number(dotted[3]), Number(dotted[4]), Number(dotted[5])];
+		if ([a, b, c, d].some((n) => n > 255)) return null;
+		s = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+	}
+	const halves = s.split('::');
+	if (halves.length > 2) return null; // more than one "::" is invalid
+	const parse = (part: string): number[] | null => {
+		if (part === '') return [];
+		const out: number[] = [];
+		for (const g of part.split(':')) {
+			if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+			out.push(parseInt(g, 16));
+		}
+		return out;
+	};
+	const head = parse(halves[0]);
+	const tail = halves.length === 2 ? parse(halves[1]) : [];
+	if (head === null || tail === null) return null;
+	if (halves.length === 2) {
+		const fill = 8 - head.length - tail.length;
+		if (fill < 0) return null;
+		return [...head, ...new Array(fill).fill(0), ...tail];
+	}
+	return head.length === 8 ? head : null;
+}
+
+/** Two 16-bit hextets -> a dotted-quad IPv4 string. */
+function hextetsToV4(hi: number, lo: number): string {
+	return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
+/**
+ * Extract the embedded IPv4 dotted-quad from an IPv4-mapped/compatible IPv6 host OR
+ * an IPv6 transition address (NAT64, 6to4, Teredo), or null. These transition
+ * mechanisms carry a real IPv4 destination inside the v6 literal, so an SSRF guard
+ * that only classifies the v6 prefix would wave through a loopback/metadata/private
+ * target encoded this way. The embedded v4 is judged through the same range checks.
  */
 function embeddedV4(h: string): string | null {
-	// Trailing dotted quad after a v4-mapped/compatible prefix, in either the
-	// compressed (::ffff:1.2.3.4) or fully-expanded (0:0:0:0:0:ffff:1.2.3.4) form.
-	const dotted = h.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-	if (dotted && /^(::ffff:|::ffff:0:|::|(0:){5}ffff:|(0:){4}0:ffff:)/.test(h)) {
-		return dotted[1];
+	const x = expandV6(h);
+	if (!x) return null;
+
+	// v4-mapped ::ffff:a.b.c.d (x = 0:0:0:0:0:ffff:HH:LL) and v4-translated
+	// ::ffff:0:a.b.c.d, plus the deprecated IPv4-compatible ::a.b.c.d. In every case
+	// the last two hextets hold the 32-bit v4.
+	const mappedOrCompat =
+		(x[0] === 0 && x[1] === 0 && x[2] === 0 && x[3] === 0 && x[4] === 0 && x[5] === 0xffff) || // ::ffff:v4
+		(x[0] === 0 && x[1] === 0 && x[2] === 0 && x[3] === 0 && x[4] === 0xffff && x[5] === 0) || // ::ffff:0:v4
+		(x[0] === 0 && x[1] === 0 && x[2] === 0 && x[3] === 0 && x[4] === 0 && x[5] === 0); // ::v4 (compat)
+	if (mappedOrCompat) return hextetsToV4(x[6], x[7]);
+
+	// NAT64 WKP: 64:ff9b::/96 (RFC 6052) - v4 in the last two hextets.
+	if (x[0] === 0x64 && x[1] === 0xff9b && x[2] === 0 && x[3] === 0 && x[4] === 0 && x[5] === 0) {
+		return hextetsToV4(x[6], x[7]);
 	}
-	// Hex-hextet v4-mapped/compatible forms. Take the last two colon-separated
-	// groups as the 32-bit v4 IFF the address is one of the embedded-v4 shapes.
-	const isMapped =
-		/^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
-		/^::ffff:0:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
-		/^(0:){5}ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h) ||
-		/^::[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(h); // deprecated v4-compatible ::a:b
-	if (!isMapped) return null;
-	const groups = h.split(':').filter((g) => g.length > 0);
-	if (groups.length < 2) return null;
-	const hi = parseInt(groups[groups.length - 2], 16);
-	const lo = parseInt(groups[groups.length - 1], 16);
-	if (Number.isNaN(hi) || Number.isNaN(lo)) return null;
-	return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+
+	// 6to4: 2002:V4HI:V4LO::/48 (RFC 3056) - the v4 is hextets 1 and 2.
+	if (x[0] === 0x2002) return hextetsToV4(x[1], x[2]);
+
+	// Teredo: 2001:0000::/32 (RFC 4380) - the client v4 is the LAST two hextets,
+	// bitwise-inverted (obfuscated).
+	if (x[0] === 0x2001 && x[1] === 0) return hextetsToV4(~x[6] & 0xffff, ~x[7] & 0xffff);
+
+	// ISATAP (RFC 5214): the interface id ...:0:5efe:V4 (global-scope) or ...:200:5efe:V4
+	// (private-scope EUI) carries the v4 in the last two hextets, under ANY /64 prefix.
+	// Deliberately prefix-agnostic (ISATAP is not scoped to a prefix): a genuine public
+	// address whose IID happens to be `0:5efe:<v4>` is decoded too and may over-block if
+	// that v4 is private - the fail-SAFE direction (it only ever adds a block, never
+	// removes one), and vanishingly rare, so accepted.
+	if (x[5] === 0x5efe && (x[4] === 0 || x[4] === 0x0200)) return hextetsToV4(x[6], x[7]);
+
+	return null;
 }
 
 export function ipCategory(host: string): IpCategory | null {
@@ -98,6 +152,11 @@ export function ipCategory(host: string): IpCategory | null {
 	// Require a colon so real IPv6 unique-local/link-local literals match but public
 	// DNS names starting "fc"/"fd" (fcm.googleapis.com, fdroid.link) do not.
 	if (h.startsWith('fe80:') || /^f[cd][0-9a-f]{0,2}:/.test(h)) return 'private';
+	// NAT64 local prefix 64:ff9b:1::/48 (RFC 8215) embeds its v4 around the u-byte
+	// (RFC 6052 2.2), not in the last 32 bits - awkward to decode and with no
+	// legitimate use as a user-supplied target, so block the whole prefix outright.
+	const x6 = expandV6(h);
+	if (x6 && x6[0] === 0x64 && x6[1] === 0xff9b && x6[2] === 1) return 'reserved';
 	// IPv4-mapped/compatible IPv6 — judge the embedded v4 (see embeddedV4).
 	const v4 = embeddedV4(h) ?? h;
 	const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
