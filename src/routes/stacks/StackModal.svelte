@@ -24,6 +24,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Badge } from '$lib/components/ui/badge';
 	import { currentEnvironment, appendEnvParam } from '$lib/stores/environment';
+	import { persistStackIcon } from '$lib/utils/stack-icon';
 	import { appSettings } from '$lib/stores/settings';
 	import { page } from '$app/stores'; // BETA GATE: backups feature flag
 	import { focusFirstInput } from '$lib/utils';
@@ -85,17 +86,8 @@
 		const envId = $currentEnvironment?.id ?? null;
 		const target = appendEnvParam(`/api/stacks/${encodeURIComponent(stackName)}/icon`, envId);
 		try {
-			if (!value) {
-				await fetch(target, { method: 'DELETE' });
-				formIcon = null;
-			} else if (value.startsWith('upload:')) {
-				const image = value.slice('upload:'.length);
-				const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) });
-				if (res.ok) formIcon = (await res.json()).icon;
-			} else {
-				const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ icon: value }) });
-				if (res.ok) formIcon = (await res.json()).icon;
-			}
+			const next = await persistStackIcon(target, value);
+			if (next !== undefined) formIcon = next; // undefined = POST failed, keep current
 			onSuccess?.();
 		} catch (e) {
 			console.error('Failed to set stack icon:', e);
