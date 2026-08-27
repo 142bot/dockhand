@@ -3,6 +3,7 @@
 	import { Box } from 'lucide-svelte';
 	import { appSettings } from '$lib/stores/settings';
 	import { selfhstMatcher, ensureSelfhstMatcher } from '$lib/stores/selfhst-refs';
+	import { selfhstIcons, requestSelfhst } from '$lib/stores/selfhst-icons';
 	import { isSelfhstIcon, selfhstRef, isCustomIcon, getStackIconComponent } from '$lib/utils/icons';
 
 	interface Props {
@@ -84,33 +85,30 @@
 
 	// Reactive match: recomputes when the matcher store loads or the image changes.
 	const ref = $derived(enabled ? $selfhstMatcher(image, name) : null);
-	// If the <img> can't load at all (a transport error - the endpoint serves a neutral
-	// placeholder SVG rather than a 404 for an unresolved icon), fall back to the glyph.
-	let imgFailed = $state(false);
-	$effect(() => {
-		// reset the failure flag when the resolved ref changes
-		void ref;
-		imgFailed = false;
-	});
 
 	// Show the fallback glyph when the toggle is on (no logo matched) or a caller that
 	// always had an icon asked for it while off - but never on dense inline spots.
 	const showFallback = $derived(!hideWhenNoMatch && (enabled || showFallbackWhenOff));
+
+	// Resolve selfh.st refs (override OR auto-matched) through the shared batch store so a
+	// list of containers makes ONE icon request, not one per row. `resolved`: data URI when
+	// ready, '' if unresolvable, undefined while the batch is in flight.
+	const activeSelfhst = $derived(hasOverride ? overrideSelfhst : enabled ? ref : null);
+	$effect(() => {
+		if (activeSelfhst) requestSelfhst(activeSelfhst);
+	});
+	const resolvedSelfhst = $derived(activeSelfhst ? $selfhstIcons[activeSelfhst] : undefined);
 </script>
 
-{#if hasOverride && overrideSelfhst}
-	<img src="/api/icons/selfhst/{overrideSelfhst}" alt="" class="{className} object-contain shrink-0" />
+{#if activeSelfhst && resolvedSelfhst}
+	<img src={resolvedSelfhst} alt="" class="{className} object-contain shrink-0" />
+{:else if activeSelfhst && resolvedSelfhst === undefined}
+	<!-- batch in flight: hold the space so the row doesn't jump -->
+	<span class="{className} shrink-0"></span>
 {:else if hasOverride && overrideCustom && overrideCustomUrl}
 	<img src={overrideCustomUrl} alt="" class="{className} object-contain shrink-0" />
 {:else if hasOverride && OverrideLucide}
 	<OverrideLucide class="{className} shrink-0" />
-{:else if enabled && ref && !imgFailed}
-	<img
-		src="/api/icons/selfhst/{ref}"
-		alt=""
-		class="{className} object-contain shrink-0"
-		onerror={() => (imgFailed = true)}
-	/>
 {:else if showFallback}
 	<!-- Generic icon so the layout stays consistent even with no match. -->
 	<FallbackIcon class="{className} shrink-0 {fallbackClass}" />

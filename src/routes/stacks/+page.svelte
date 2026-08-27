@@ -905,9 +905,15 @@
 
 			stacks = dockerStacks;
 
-			// Fetch env var counts for internal and git stacks (in background, don't block UI)
-			const allStackNames = stacks.map(s => s.name);
-			fetchEnvVarCounts(allStackNames, sourcesData);
+			// Env-var counts come from /api/stacks/sources (envVarCount per stack) - no
+			// per-stack /env fetch needed for the list badge.
+			const counts: Record<string, number> = {};
+			for (const [name, src] of Object.entries(sourcesData as Record<string, { envVarCount?: number }>)) {
+				if (src && typeof src.envVarCount === 'number' && src.envVarCount > 0) {
+					counts[name] = src.envVarCount;
+				}
+			}
+			stackEnvVarCounts = counts;
 		} catch (error) {
 			console.error('Failed to fetch stacks:', error);
 			toast.error('Failed to load stacks');
@@ -915,39 +921,6 @@
 			loading = false;
 			lastLoadedEnvId = envId;
 		}
-	}
-
-	async function fetchEnvVarCounts(stackNames: string[], sources: Record<string, any>) {
-		// Only fetch for stacks that can have env vars (internal or git)
-		const stacksToFetch = stackNames.filter(name => {
-			const source = sources[name];
-			return source && (source.sourceType === 'internal' || source.sourceType === 'git');
-		});
-
-		if (stacksToFetch.length === 0) {
-			stackEnvVarCounts = {};
-			return;
-		}
-
-		const counts: Record<string, number> = {};
-
-		// Fetch in parallel with error handling
-		await Promise.all(stacksToFetch.map(async (stackName) => {
-			try {
-				const response = await fetch(appendEnvParam(`/api/stacks/${encodeURIComponent(stackName)}/env`, envId));
-				if (response.ok) {
-					const data = await response.json();
-					const varCount = data.variables?.length || 0;
-					if (varCount > 0) {
-						counts[stackName] = varCount;
-					}
-				}
-			} catch (e) {
-				// Ignore errors for individual stack env var fetches
-			}
-		}));
-
-		stackEnvVarCounts = counts;
 	}
 
 	function getStackSource(stackName: string) {
@@ -1031,13 +1004,13 @@
 		}
 	}
 
-	async function restartStack(name: string, mode: 'restart' | 'recreate' = 'restart') {
+	async function restartStack(name: string, mode: 'restart' | 'ordered' | 'recreate' = 'restart') {
 		operationError = null;
 		stackActionLoading = name;
 		try {
 			let url = appendEnvParam(`/api/stacks/${encodeURIComponent(name)}/restart`, envId);
-			if (mode === 'recreate') {
-				url += (url.includes('?') ? '&' : '?') + 'mode=recreate';
+			if (mode === 'recreate' || mode === 'ordered') {
+				url += (url.includes('?') ? '&' : '?') + `mode=${mode}`;
 			}
 			const response = await fetch(url, { method: 'POST' });
 			const data = await readJobResponse(response);
@@ -2170,16 +2143,20 @@
 											align="end"
 											sideOffset={8}
 										>
-											<div class="flex flex-col gap-1.5">
+											<div class="flex flex-col gap-2 w-60">
 												<span class="text-xs text-muted-foreground">Restart stack <strong>{stack.name.length > 20 ? stack.name.slice(0, 20) + '...' : stack.name}</strong></span>
-												<div class="flex items-center gap-1.5">
-													<Button size="sm" variant="secondary" class="h-6 px-2 text-xs" onclick={() => { restartPopoverOpen[stack.name] = false; restartStack(stack.name, 'restart'); }}>
-														Restart
-													</Button>
-													<Button size="sm" variant="default" class="h-6 px-2 text-xs" onclick={() => { restartPopoverOpen[stack.name] = false; restartStack(stack.name, 'recreate'); }}>
-														Recreate (stop & up)
-													</Button>
-												</div>
+												<button class="flex flex-col items-start gap-0.5 rounded px-2 py-1.5 text-left hover:bg-muted" onclick={() => { restartPopoverOpen[stack.name] = false; restartStack(stack.name, 'restart'); }}>
+													<span class="text-xs font-medium">Restart</span>
+													<span class="text-[11px] text-muted-foreground">Fast in-place restart. Ignores depends_on ordering.</span>
+												</button>
+												<button class="flex flex-col items-start gap-0.5 rounded px-2 py-1.5 text-left hover:bg-muted" onclick={() => { restartPopoverOpen[stack.name] = false; restartStack(stack.name, 'ordered'); }}>
+													<span class="text-xs font-medium">Restart in order</span>
+													<span class="text-[11px] text-muted-foreground">Stop then start in depends_on order. Same container IDs.</span>
+												</button>
+												<button class="flex flex-col items-start gap-0.5 rounded px-2 py-1.5 text-left hover:bg-muted" onclick={() => { restartPopoverOpen[stack.name] = false; restartStack(stack.name, 'recreate'); }}>
+													<span class="text-xs font-medium">Recreate (stop &amp; up)</span>
+													<span class="text-[11px] text-muted-foreground">Recreate containers in order. New IDs, re-pulls newer images.</span>
+												</button>
 											</div>
 										</Popover.Content>
 									</Popover.Root>

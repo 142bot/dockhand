@@ -490,6 +490,55 @@ export async function findStackDir(stackName: string, envId?: number | null): Pr
 	return null;
 }
 
+/** Count the env vars GET /api/stacks/[name]/env would return for a stack, without
+ *  reading values - just for the list badge. Mirrors that endpoint's build EXACTLY
+ *  (same env param, same source lookup, git = all DB rows, internal = .env keys +
+ *  DB secret rows) so the badge count equals what the env editor shows. Returns 0 on
+ *  any error (a missing badge is harmless). */
+export async function countStackEnvVars(stackName: string, envId?: number | null): Promise<number> {
+	try {
+		// Same three lookups GET /env does, with the same env param.
+		const dbVars = await getStackEnvVars(stackName, envId, true);
+		const src = await getStackSource(stackName, envId);
+
+		if (src?.sourceType === 'git') {
+			// Git stacks: ALL vars (overrides + secrets) come from the DB.
+			return dbVars.length;
+		}
+
+		// Internal/adopted: non-secrets from the .env file + secrets from the DB.
+		let count = dbVars.filter((v) => v.isSecret).length;
+
+		let envFilePath: string | null = null;
+		if (src?.envPath === '') envFilePath = null;
+		else if (src?.envPath) envFilePath = src.envPath;
+		else if (src?.composePath) envFilePath = join(dirname(src.composePath), '.env');
+		else {
+			const stackDir = await findStackDir(stackName, envId);
+			if (stackDir) envFilePath = join(stackDir, '.env');
+		}
+		if (envFilePath && existsSync(envFilePath)) {
+			try {
+				// Same parse GET /env uses (key=value lines, skip blanks/comments). Inlined
+				// to count keys without the verbose git-env parser's per-stack logging.
+				const keys = new Set<string>();
+				for (const line of readFileSync(envFilePath, 'utf-8').split('\n')) {
+					const t = line.trim();
+					if (!t || t.startsWith('#')) continue;
+					const eq = t.indexOf('=');
+					if (eq > 0) keys.add(t.slice(0, eq).trim());
+				}
+				count += keys.size;
+			} catch {
+				// ignore file read errors, mirror GET /env
+			}
+		}
+		return count;
+	} catch {
+		return 0;
+	}
+}
+
 // =============================================================================
 // COMPOSE FILE MANAGEMENT
 // =============================================================================
@@ -2362,19 +2411,22 @@ export async function stopStack(
 }
 
 /**
- * Restart a stack using docker compose restart or stop+up (recreate mode).
+ * Restart a stack using docker compose restart, stop+start (ordered), or stop+up (recreate).
  *
  * mode='restart' (default): Uses 'docker compose restart' — fast, in-place restart
- *   that preserves container IDs but won't fix stale network_mode references.
+ *   that preserves container IDs but does NOT honor depends_on startup ordering.
+ * mode='ordered': Uses 'docker compose stop' then 'docker compose start' — an in-place
+ *   restart that respects depends_on ordering (start builds the dependency graph) while
+ *   keeping the same container IDs and NOT re-pulling images.
  * mode='recreate': Uses 'docker compose stop' then 'docker compose up -d' —
- *   recreates containers, fixing network_mode: service:<container> dependencies.
+ *   recreates containers (new IDs, re-pulls newer images), fixing network_mode: service:<container>.
  *
  * Falls back to individual container restart for stacks without compose files.
  */
 export async function restartStack(
 	stackName: string,
 	envId?: number | null,
-	mode: 'restart' | 'recreate' = 'restart'
+	mode: 'restart' | 'ordered' | 'recreate' = 'restart'
 ): Promise<StackOperationResult> {
 	const result = await requireComposeFile(stackName, envId);
 
@@ -2398,6 +2450,11 @@ export async function restartStack(
 		await executeComposeCommand('stop', opts, result.content!, result.nonSecretVars, result.secretVars);
 		await applyProviderSecretsToComposeResult(result, stackName, envId, `[Stack:${stackName}]`);
 		composeResult = await executeComposeCommand('up', { ...opts, forceRecreate: true }, result.content!, result.nonSecretVars, result.secretVars);
+	} else if (mode === 'ordered') {
+		// Stop everything, then start in depends_on order (compose start honors the
+		// dependency graph). Same container IDs, no recreate, no re-pull.
+		await executeComposeCommand('stop', opts, result.content!, result.nonSecretVars, result.secretVars);
+		composeResult = await executeComposeCommand('start', opts, result.content!, result.nonSecretVars, result.secretVars);
 	} else {
 		composeResult = await executeComposeCommand('restart', opts, result.content!, result.nonSecretVars, result.secretVars);
 	}

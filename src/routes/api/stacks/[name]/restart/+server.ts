@@ -7,10 +7,10 @@ import type { RequestHandler } from './$types';
 
 /**
  * @openapi
- * summary: Restart a stack (mode=restart) or recreate its containers (mode=recreate); progress and the final result stream over Server-Sent Events
+ * summary: Restart a stack (mode=restart|ordered|recreate); progress and the final result stream over Server-Sent Events
  * path: name:string! Stack name (from GET /api/stacks)
  * query: env:integer Environment ID the stack belongs to (from GET /api/environments)
- * query: mode:string Restart mode — "recreate" recreates containers, anything else performs a plain restart
+ * query: mode:string Restart mode — "recreate" recreates containers (new IDs, re-pull), "ordered" does a stop+start honoring depends_on ordering (same IDs), anything else is a plain in-place restart
  * resp-200: Server-Sent-Events job stream with a final result event ({success, output})
  * resp-403: Permission denied (requires stacks:restart, or environment access denied on enterprise)
  */
@@ -31,7 +31,8 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Access denied to this environment' }, { status: 403 });
 	}
 
-	const mode = url.searchParams.get('mode') === 'recreate' ? 'recreate' : 'restart';
+	const modeParam = url.searchParams.get('mode');
+	const mode = modeParam === 'recreate' ? 'recreate' : modeParam === 'ordered' ? 'ordered' : 'restart';
 
 	return createJobResponse(async (send) => {
 		try {

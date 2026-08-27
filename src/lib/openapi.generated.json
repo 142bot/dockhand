@@ -25831,7 +25831,7 @@
         "tags": [
           "stacks"
         ],
-        "summary": "Restart a stack (mode=restart) or recreate its containers (mode=recreate); progress and the final result stream over Server-Sent Events",
+        "summary": "Restart a stack (mode=restart|ordered|recreate); progress and the final result stream over Server-Sent Events",
         "parameters": [
           {
             "name": "name",
@@ -25858,7 +25858,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Restart mode — \"recreate\" recreates containers, anything else performs a plain restart"
+            "description": "Restart mode — \"recreate\" recreates containers (new IDs, re-pull), \"ordered\" does a stop+start honoring depends_on ordering (same IDs), anything else is a plain in-place restart"
           }
         ],
         "responses": {
@@ -26631,7 +26631,7 @@
         "tags": [
           "stacks"
         ],
-        "summary": "List stack source records (their stored compose/env paths and source type)",
+        "summary": "List stack source records (their stored compose/env paths and source type, plus an env-var count)",
         "parameters": [
           {
             "name": "env",
