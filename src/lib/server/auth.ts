@@ -42,6 +42,7 @@ import {
 	type OidcConfig
 } from './db';
 import { Client as LdapClient } from 'ldapts';
+import { resolveSessionTimeout, cookieMaxAge } from '$lib/utils/session-timeout';
 import { escapeLdapFilterValue } from './ldap-filter';
 import { isEnterprise } from './license';
 import { secureRandomBytes } from './crypto-fallback';
@@ -205,21 +206,16 @@ export async function createUserSession(
 	// Generate secure token
 	const sessionId = generateSessionToken();
 
-	// Get session timeout from settings
+	// Get session timeout from settings (0 = never expire, see resolveSessionTimeout).
 	const settings = await getAuthSettings();
-	// Safety: ensure sessionTimeout is valid (1 second to 30 days), default to 24h if invalid
-	const MAX_SESSION_TIMEOUT = 2592000; // 30 days in seconds
-	const DEFAULT_SESSION_TIMEOUT = 86400; // 24 hours in seconds
-	const sessionTimeout = (settings?.sessionTimeout > 0 && settings?.sessionTimeout <= MAX_SESSION_TIMEOUT)
-		? settings.sessionTimeout
-		: DEFAULT_SESSION_TIMEOUT;
+	const sessionTimeout = resolveSessionTimeout(settings?.sessionTimeout);
 	const expiresAt = new Date(Date.now() + sessionTimeout * 1000).toISOString();
 
 	// Create session in database
 	const session = await dbCreateSession(sessionId, userId, provider, expiresAt);
 
-	// Set secure cookie
-	setSessionCookie(cookies, sessionId, sessionTimeout, request);
+	// Cookie max-age is capped at the browser's ~400-day limit; the DB session outlives it.
+	setSessionCookie(cookies, sessionId, cookieMaxAge(sessionTimeout), request);
 
 	// Update user's last login time
 	await updateUser(userId, { lastLogin: new Date().toISOString() });

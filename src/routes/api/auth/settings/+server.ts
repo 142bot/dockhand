@@ -42,8 +42,9 @@ export const GET: RequestHandler = async ({ cookies }) => {
 /**
  * @openapi
  * summary: Update the global authentication settings (enabling auth requires at least one admin/user to exist)
- * body: {authEnabled:boolean, defaultProvider:string}
- * body-example: {"authEnabled":true,"defaultProvider":"local"}
+ * description: sessionTimeout is in seconds (clamped 3600..604800); 0 disables expiry so sessions never time out.
+ * body: {authEnabled:boolean, defaultProvider:string, sessionTimeout:integer}
+ * body-example: {"authEnabled":true,"defaultProvider":"local","sessionTimeout":86400}
  * resp-200: {authEnabled:boolean!, defaultProvider:string}
  * resp-400: Cannot enable authentication without an existing user/admin (response includes requiresUser:true)
  * resp-401: Authentication required (auth is enabled and the caller is not authenticated)
@@ -82,9 +83,12 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 			}
 		}
 
-		// Enforce minimum session timeout of 1 hour
+		// 0 means "never expire" (#1302); otherwise enforce 1 hour .. 7 days.
 		if (data.sessionTimeout !== undefined) {
-			data.sessionTimeout = Math.max(3600, Math.min(604800, parseInt(data.sessionTimeout) || 86400));
+			const parsed = parseInt(data.sessionTimeout);
+			data.sessionTimeout = parsed === 0
+				? 0
+				: Math.max(3600, Math.min(604800, parsed || 86400));
 		}
 
 		const settings = await updateAuthSettings(data);
