@@ -1,5 +1,22 @@
 [
   {
+    "version": "1.0.45",
+    "date": "2026-08-27",
+    "changes": [
+      { "type": "fix", "text": "security hardening across the API" },
+      { "type": "feature", "text": "KeePassXC as a secret provider - pull secrets from a .kdbx via keepassxc-cli, bulk or inline refs (#1460)" },
+      { "type": "feature", "text": "compose generated from a container now captures network config and resource limits (#1464)" },
+      { "type": "feature", "text": "compose validate flags a service with no healthcheck and a defined-but-unused named volume" },
+      { "type": "feature", "text": "optional Webhook column on the stacks list with a git stack's webhook id and copy-URL button (#845)" },
+      { "type": "feature", "text": "sort by Disk I/O and Net I/O - the header cycles read/write and down/up (#1111)" },
+      { "type": "feature", "text": "option to disable the session timeout (#1302)" },
+      { "type": "fix", "text": "pausing or resuming a backup schedule no longer clears the retention policy (#1462)" },
+      { "type": "fix", "text": "emergency script to relocate stack paths after moving DATA_DIR (#651, #904)" },
+      { "type": "fix", "text": "git stacks can now set a custom icon (#1473)" }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.45"
+  },
+  {
     "version": "1.0.44",
     "date": "2026-08-25",
     "changes": [
