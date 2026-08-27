@@ -515,6 +515,50 @@ export const RULES: RuleDefinition[] = [
 		}
 	},
 	{
+		id: 'UNUSED_VOLUME',
+		description: 'A top-level named volume is defined but never mounted by any service',
+		group: 'correctness',
+		defaultSeverity: 'info',
+		check(p) {
+			const definedVolumes = asRecord(p.doc?.volumes) ?? {};
+			const definedNames = Object.keys(definedVolumes);
+			if (definedNames.length === 0) return [];
+
+			// Collect every named-volume source referenced by any service (same extraction
+			// as UNDEFINED_VOLUME_REF: a bare token, or a long-form { type: volume, source }).
+			const used = new Set<string>();
+			for (const svc of Object.values(services(p))) {
+				const vols = Array.isArray(svc.volumes) ? svc.volumes : [];
+				for (const v of vols) {
+					if (typeof v === 'string') {
+						const left = v.split(':')[0];
+						if (left && !left.startsWith('/') && !left.startsWith('.') && !left.startsWith('~')) {
+							used.add(left);
+						}
+					} else {
+						const o = asRecord(v);
+						if (o?.type === 'volume' && typeof o.source === 'string') used.add(o.source);
+					}
+				}
+			}
+
+			const out: RuleFinding[] = [];
+			for (const vol of definedNames) {
+				if (used.has(vol)) continue;
+				// An external volume is often declared just so compose won't try to create it;
+				// it may be mounted elsewhere, so don't flag it as unused.
+				if (asRecord(definedVolumes[vol])?.external) continue;
+				out.push({
+					ruleId: 'UNUSED_VOLUME',
+					message: `Named volume "${vol}" is defined but no service mounts it`,
+					hint: `Mount it from a service under volumes:, or remove it from the top-level volumes: if it is not needed.`,
+					line: p.lineOf(['volumes', vol]) ?? p.lineOf(['volumes'])
+				});
+			}
+			return out;
+		}
+	},
+	{
 		id: 'CONTAINER_NAME_COLLISION',
 		description: 'container_name is already used by a container on the environment',
 		group: 'correctness',
@@ -1036,6 +1080,31 @@ export const RULES: RuleDefinition[] = [
 					line: svcLine,
 					fix,
 					fixDescription: 'Add restart: unless-stopped'
+				});
+			}
+			return out;
+		}
+	},
+	{
+		id: 'MISSING_HEALTHCHECK',
+		description: 'A service has no healthcheck, so Docker cannot tell whether it is actually working',
+		group: 'reliability',
+		defaultSeverity: 'info',
+		check(p) {
+			const out: RuleFinding[] = [];
+			for (const [name, svc] of Object.entries(services(p))) {
+				// A compose-declared healthcheck, or one explicitly turned off, is a
+				// deliberate choice - don't nag either way. We only see the compose file,
+				// not the image's own HEALTHCHECK, so this stays an info-level hint.
+				const hc = asRecord(svc.healthcheck);
+				if (hc) continue;
+				if ('healthcheck' in svc) continue;
+				out.push({
+					ruleId: 'MISSING_HEALTHCHECK',
+					service: name,
+					message: `"${name}" has no healthcheck - Docker reports it as running even if the app inside has stopped responding`,
+					hint: 'Add a healthcheck so restart policies and depends_on: condition: service_healthy can react to a hung container. The image may already ship one.',
+					line: p.lineOf(['services', name])
 				});
 			}
 			return out;

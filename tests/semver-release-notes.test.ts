@@ -3,7 +3,11 @@
  * whose tag is the SAME numeric version, ignoring v-prefix / flavor noise.
  */
 import { describe, it, expect, mock } from 'bun:test';
-import { matchReleasesToVersions, fetchReleaseNotes } from '../src/lib/server/semver/release-notes';
+import {
+	matchReleasesToVersions,
+	fetchReleaseNotes,
+	resolveAndFetchReleaseNotes
+} from '../src/lib/server/semver/release-notes';
 import type { ReleaseSource } from '../src/lib/server/semver/release-source';
 
 const rel = (tag: string, body = 'notes') => ({
@@ -117,5 +121,109 @@ describe('fetchReleaseNotes rate-limit detection', () => {
 		const f = mock(async () => ({ ok: false, status: 403, headers: hdr({ 'x-ratelimit-remaining': '0' }), json: async () => ({}) }));
 		const r = await fetchReleaseNotes(giteaSource('codeberg.org'), ['1.0.0'], f as unknown as typeof fetch);
 		expect(r.rateLimited).toBe(false);
+	});
+});
+
+// A fetch double that returns a fixed release list only for a specific api slug,
+// and empty for any other repo (the "wrong same-named repo" case).
+const fetchForSlug = (slug: string, tags: string[]) =>
+	mock(async (url: string) => ({
+		ok: true,
+		status: 200,
+		headers: { get: () => null },
+		json: async () =>
+			url.includes(`/repos/${slug}/`) ? tags.map((t) => rel(t)) : []
+	}));
+
+describe('resolveAndFetchReleaseNotes (validated fallback)', () => {
+	it('uses a confident source label directly', async () => {
+		const f = fetchForSlug('traefik/traefik', ['v3.1']);
+		const r = await resolveAndFetchReleaseNotes(
+			'traefik:v3.1',
+			{ 'org.opencontainers.image.source': 'https://github.com/traefik/traefik' },
+			['3.1'],
+			f as unknown as typeof fetch
+		);
+		expect(r.source?.slug).toBe('traefik/traefik');
+		expect(r.notes.map((n) => n.version)).toEqual(['3.1']);
+	});
+
+	it('accepts a guessed image-name repo when a release matches the wanted version', async () => {
+		const f = fetchForSlug('grafana/grafana', ['v11.0.0']);
+		const r = await resolveAndFetchReleaseNotes(
+			'grafana/grafana:11.0.0',
+			{},
+			['11.0.0'],
+			f as unknown as typeof fetch
+		);
+		expect(r.source?.slug).toBe('grafana/grafana');
+		expect(r.source?.needsValidation).toBe(true);
+		expect(r.notes).toHaveLength(1);
+	});
+
+	it('REJECTS a guessed repo whose releases do not match the wanted version', async () => {
+		// The same-named repo exists and returns releases, but none match 11.0.0.
+		const f = fetchForSlug('grafana/grafana', ['v1.2.3', 'v0.9.0']);
+		const r = await resolveAndFetchReleaseNotes(
+			'grafana/grafana:11.0.0',
+			{},
+			['11.0.0'],
+			f as unknown as typeof fetch
+		);
+		expect(r.source).toBeNull();
+		expect(r.notes).toHaveLength(0);
+	});
+
+	it('returns null source for an image with no guessable repo', async () => {
+		const f = fetchForSlug('nobody/nothing', ['v1.0.0']);
+		const r = await resolveAndFetchReleaseNotes('nginx:1.25', {}, ['1.25'], f as unknown as typeof fetch);
+		expect(r.source).toBeNull();
+		expect(r.notes).toHaveLength(0);
+	});
+
+	it('preserves rateLimited when a guessed repo is discarded due to a 403 rate limit', async () => {
+		// grafana/grafana is a correct guess, but GitHub 403s (rate limit) so no notes
+		// match. The source is dropped, yet the rateLimited signal must survive so the UI
+		// can prompt for a token.
+		const f = mock(async () => ({
+			ok: false,
+			status: 403,
+			headers: { get: (k: string) => (k.toLowerCase() === 'x-ratelimit-remaining' ? '0' : null) },
+			json: async () => ({})
+		}));
+		const r = await resolveAndFetchReleaseNotes('grafana/grafana:11.0.0', {}, ['11.0.0'], f as unknown as typeof fetch);
+		expect(r.source).toBeNull();
+		expect(r.notes).toHaveLength(0);
+		expect(r.rateLimited).toBe(true);
+	});
+
+	it('caps guessed candidates so many labels do not fan out unboundedly', async () => {
+		// 8 distinct github URLs in labels + an image-name guess; only the first few are
+		// tried. None match, so we can count fetches via the mock call count staying small.
+		const labels: Record<string, string> = {};
+		for (let i = 0; i < 8; i++) labels[`org.opencontainers.image.x${i}`] = `https://github.com/o${i}/r${i}`;
+		const f = mock(async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => [] }));
+		await resolveAndFetchReleaseNotes('acme/app:1.0.0', labels, ['1.0.0'], f as unknown as typeof fetch);
+		// MAX_GUESSES = 5: image-name guess + 4 label URLs at most.
+		expect(f.mock.calls.length).toBeLessThanOrEqual(5);
+	});
+
+	it('falls through image-name guess to a matching label URL', async () => {
+		// image-name repo (acme/app) has no matching release; the url label (acme/real) does.
+		const f = mock(async (url: string) => ({
+			ok: true,
+			status: 200,
+			headers: { get: () => null },
+			json: async () =>
+				url.includes('/repos/acme/real/') ? [rel('v2.0.0')] : []
+		}));
+		const r = await resolveAndFetchReleaseNotes(
+			'acme/app:2.0.0',
+			{ 'org.opencontainers.image.url': 'https://github.com/acme/real' },
+			['2.0.0'],
+			f as unknown as typeof fetch
+		);
+		expect(r.source?.slug).toBe('acme/real');
+		expect(r.notes).toHaveLength(1);
 	});
 });

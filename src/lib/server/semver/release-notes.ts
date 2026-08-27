@@ -7,6 +7,7 @@
 
 import { parseTag, compareParts } from './tag-parser';
 import type { ReleaseSource } from './release-source';
+import { resolveReleaseSourceCandidates } from './release-source';
 import { isSafeNotificationUrl } from '../url-safety';
 
 export interface ReleaseNote {
@@ -151,4 +152,41 @@ export async function fetchReleaseNotes(
 	}
 
 	return { notes: matchReleasesToVersions(collected, wanted), rateLimited };
+}
+
+/**
+ * Resolve a release-note source for an image and fetch notes, with a validated
+ * fallback when the image carries no `org.opencontainers.image.source` label.
+ *
+ * A CONFIDENT source (label / ghcr name) is used directly. Otherwise each GUESSED
+ * candidate (image-name slug, github URL in another label) is tried in order and
+ * ACCEPTED only if the forge returns at least one release matching a wanted version
+ * - so a wrong same-named repo yields no notes and is discarded (never guess a repo
+ * blind). Returns the accepted source's slug/releasesUrl too, so the caller can
+ * surface the correct "View releases" link.
+ */
+export async function resolveAndFetchReleaseNotes(
+	imageName: string | null | undefined,
+	labels: Record<string, string> | null | undefined,
+	wanted: string[],
+	fetchImpl: typeof fetch = fetch
+): Promise<ReleaseNotesResult & { source: ReleaseSource | null }> {
+	const candidates = resolveReleaseSourceCandidates(imageName, labels);
+
+	// Preserve a rate-limit signal even when every guessed candidate is discarded:
+	// the notes may be hidden purely because GitHub's unauthenticated limit is spent,
+	// and the UI's "set a GitHub token" hint keys off this flag.
+	let sawRateLimit = false;
+	for (const src of candidates) {
+		const result = await fetchReleaseNotes(src, wanted, fetchImpl);
+		sawRateLimit ||= result.rateLimited;
+		// A confident source is authoritative even with no matched notes (the newer
+		// tag may simply predate the API's recent-releases window). A guessed source
+		// is only trusted once a note actually matches a wanted version.
+		if (!src.needsValidation || result.notes.length > 0) {
+			return { ...result, source: src };
+		}
+	}
+
+	return { notes: [], rateLimited: sawRateLimit, source: null };
 }

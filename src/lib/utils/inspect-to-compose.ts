@@ -26,6 +26,9 @@ export interface DockerInspect {
 		Domainname?: string;
 		OpenStdin?: boolean;
 		Tty?: boolean;
+		StopSignal?: string;
+		StopTimeout?: number | null;
+		ExposedPorts?: Record<string, unknown> | null;
 		Healthcheck?: {
 			Test?: string[];
 			Interval?: number;
@@ -44,9 +47,28 @@ export interface DockerInspect {
 		ReadonlyRootfs?: boolean;
 		NetworkMode?: string;
 		IpcMode?: string;
+		PidMode?: string;
+		UsernsMode?: string;
+		CgroupParent?: string;
+		Runtime?: string;
+		Init?: boolean | null;
 		ShmSize?: number;
 		Dns?: string[] | null;
+		DnsSearch?: string[] | null;
+		DnsOptions?: string[] | null;
 		ExtraHosts?: string[] | null;
+		GroupAdd?: string[] | null;
+		SecurityOpt?: string[] | null;
+		VolumesFrom?: string[] | null;
+		OomKillDisable?: boolean | null;
+		OomScoreAdj?: number;
+		Memory?: number;
+		MemoryReservation?: number;
+		MemorySwap?: number;
+		NanoCpus?: number;
+		CpuShares?: number;
+		CpusetCpus?: string;
+		PidsLimit?: number | null;
 		Devices?: Array<{ PathOnHost: string; PathInContainer: string; CgroupPermissions?: string }> | null;
 		Sysctls?: Record<string, string> | null;
 		Tmpfs?: Record<string, string> | null;
@@ -54,7 +76,14 @@ export interface DockerInspect {
 		LogConfig?: { Type?: string; Config?: Record<string, string> | null };
 	};
 	NetworkSettings?: {
-		Networks?: Record<string, { MacAddress?: string } | null> | null;
+		Networks?: Record<
+			string,
+			{
+				Aliases?: string[] | null;
+				MacAddress?: string;
+				IPAMConfig?: { IPv4Address?: string; IPv6Address?: string } | null;
+			} | null
+		> | null;
 	};
 	Mounts?: Array<{
 		Type?: string;
@@ -78,12 +107,45 @@ export interface InspectToComposeOptions {
 	imageCmd?: string[] | null;
 	/** The image's own `Config.Labels`. Labels whose value matches the image are dropped (image-baked, e.g. `maintainer`). */
 	imageLabels?: Record<string, string> | null;
+	/** The image's own `Config.ExposedPorts`. Ports the image itself EXPOSEs are dropped from `expose:`. */
+	imageExposedPorts?: Record<string, unknown> | null;
 	/** Override the service key (defaults to the container name). */
 	serviceName?: string;
 }
 
 /** Networks Docker always has; a container on one of these alone has no user-set network. */
 const DEFAULT_NETWORKS = new Set(['bridge', 'host', 'none', 'default']);
+
+/**
+ * Per-network compose config from a container's NetworkSettings.Networks entry. Keeps only
+ * user-set detail: static IP (IPAMConfig), a per-network MAC, and EXTRA aliases. Docker/compose
+ * auto-add three aliases that are NOT user-set and would be noise: the service key we emit, the
+ * 12-hex short container id, and (for a compose-managed container) the `com.docker.compose.service`
+ * name. Returns null when the network carries nothing worth emitting (a bare attachment).
+ */
+function networkConfig(
+	info: { Aliases?: string[] | null; MacAddress?: string; IPAMConfig?: { IPv4Address?: string; IPv6Address?: string } | null } | null,
+	serviceName: string,
+	composeServiceName?: string
+): Record<string, unknown> | null {
+	if (!info) return null;
+	const cfg: Record<string, unknown> = {};
+	const v4 = info.IPAMConfig?.IPv4Address;
+	const v6 = info.IPAMConfig?.IPv6Address;
+	if (v4) cfg.ipv4_address = v4;
+	if (v6) cfg.ipv6_address = v6;
+	const auto = new Set([serviceName, composeServiceName].filter(Boolean) as string[]);
+	const aliases = (info.Aliases ?? []).filter((a) => !auto.has(a) && !/^[0-9a-f]{12}$/.test(a));
+	if (aliases.length > 0) cfg.aliases = aliases;
+	if (info.MacAddress) cfg.mac_address = info.MacAddress;
+	return Object.keys(cfg).length > 0 ? cfg : null;
+}
+
+/**
+ * NetworkMode values that mean "Docker's default bridge networking" - emitting them adds
+ * nothing. `host`/`none`/`container:x`/a service name are deliberate modes and ARE emitted.
+ */
+const DEFAULT_NETWORK_MODES = new Set(['default', 'bridge']);
 
 /**
  * A 64-char hex name is Docker's auto-generated ANONYMOUS volume id (it carries the
@@ -140,6 +202,7 @@ export function inspectToComposeService(
 	const config = inspect.Config ?? {};
 	const host = inspect.HostConfig ?? {};
 	const name = options.serviceName ?? cleanName(inspect.Name);
+	const composeServiceName = config.Labels?.['com.docker.compose.service'];
 	const service: Record<string, unknown> = {};
 
 	if (config.Image) service.image = config.Image;
@@ -219,14 +282,23 @@ export function inspectToComposeService(
 		}
 	}
 
-	// Networks: a container on a real (non-default) network gets `networks: [names]`.
-	// A non-default `network_mode` (host / container:x / a service name) is emitted as-is.
-	const networks = Object.keys(inspect.NetworkSettings?.Networks ?? {}).filter((n) => !DEFAULT_NETWORKS.has(n));
-	if (networks.length > 0) {
-		service.networks = networks;
+	// Networks: a container on real (non-default) networks gets `networks:`. Each network keeps
+	// its user-set details (static IP, extra aliases, per-network MAC); a bare network is left
+	// null. If NO network carries any detail we emit the short list form (zero noise); otherwise
+	// the map form. A non-default `network_mode` (host / none / container:x / a service name) is
+	// emitted instead, only when the container has no real networks.
+	const netEntries = Object.entries(inspect.NetworkSettings?.Networks ?? {}).filter(
+		([n]) => !DEFAULT_NETWORKS.has(n)
+	);
+	if (netEntries.length > 0) {
+		const configs = netEntries.map(([n, info]) => [n, networkConfig(info, name, composeServiceName)] as const);
+		const anyDetail = configs.some(([, cfg]) => cfg !== null);
+		service.networks = anyDetail
+			? Object.fromEntries(configs)
+			: configs.map(([n]) => n);
 	} else {
 		const mode = host.NetworkMode;
-		if (mode && !DEFAULT_NETWORKS.has(mode)) service.network_mode = mode;
+		if (mode && !DEFAULT_NETWORK_MODES.has(mode)) service.network_mode = mode;
 	}
 
 	if (host.CapAdd && host.CapAdd.length > 0) service.cap_add = host.CapAdd;
@@ -244,6 +316,8 @@ export function inspectToComposeService(
 	if (host.Sysctls && Object.keys(host.Sysctls).length > 0) service.sysctls = host.Sysctls;
 	if (host.Tmpfs && Object.keys(host.Tmpfs).length > 0) service.tmpfs = Object.keys(host.Tmpfs);
 	if (host.Dns && host.Dns.length > 0) service.dns = host.Dns;
+	if (host.DnsSearch && host.DnsSearch.length > 0) service.dns_search = host.DnsSearch;
+	if (host.DnsOptions && host.DnsOptions.length > 0) service.dns_opt = host.DnsOptions;
 	if (host.ExtraHosts && host.ExtraHosts.length > 0) service.extra_hosts = host.ExtraHosts;
 
 	if (Array.isArray(host.Ulimits) && host.Ulimits.length > 0) {
@@ -269,10 +343,57 @@ export function inspectToComposeService(
 		service.hostname = config.Hostname;
 	}
 	if (host.IpcMode && host.IpcMode !== 'private' && host.IpcMode !== '') service.ipc = host.IpcMode;
-	// shm_size deliberately NOT emitted: its default is host-derived (a fraction of RAM),
-	// so there's no fixed value to compare against and it would almost always be noise.
 	if (config.OpenStdin) service.stdin_open = true;
 	if (config.Tty) service.tty = true;
+
+	// Resource limits: emit the TOP-LEVEL standalone compose keys (docker compose up honors them
+	// on a plain container; `deploy.resources` is swarm-only). Each skips its daemon default.
+	if (host.Memory && host.Memory > 0) service.mem_limit = host.Memory;
+	if (host.MemoryReservation && host.MemoryReservation > 0) service.mem_reservation = host.MemoryReservation;
+	// MemorySwap: -1 = unlimited swap, 0 = unset; only meaningful alongside a memory limit.
+	if (host.MemorySwap && (host.MemorySwap > 0 || host.MemorySwap === -1)) service.memswap_limit = host.MemorySwap;
+	// NanoCpus is nano-cores; compose `cpus` is a decimal core count.
+	if (host.NanoCpus && host.NanoCpus > 0) service.cpus = host.NanoCpus / 1e9;
+	// CpuShares: default 0, and 1024 is the daemon's neutral weight - neither is user intent.
+	if (host.CpuShares && host.CpuShares !== 1024) service.cpu_shares = host.CpuShares;
+	if (host.CpusetCpus && host.CpusetCpus !== '') service.cpuset = host.CpusetCpus;
+	// PidsLimit: 0/null = unset, -1 = unlimited (the default); emit only a real positive cap.
+	if (host.PidsLimit && host.PidsLimit > 0) service.pids_limit = host.PidsLimit;
+
+	// Lifecycle: stop signal/grace, ports EXPOSEd-but-not-published, supplementary groups, init.
+	if (config.StopSignal && config.StopSignal !== 'SIGTERM') service.stop_signal = config.StopSignal;
+	if (typeof config.StopTimeout === 'number' && config.StopTimeout > 0) {
+		service.stop_grace_period = `${config.StopTimeout}s`;
+	}
+	const exposed = config.ExposedPorts ? Object.keys(config.ExposedPorts) : [];
+	if (exposed.length > 0) {
+		const published = new Set(Object.keys(host.PortBindings ?? {}));
+		const imageExposed = new Set(Object.keys(options.imageExposedPorts ?? {}));
+		// Only ports with NO host binding that the image itself did not already EXPOSE.
+		const expose = exposed
+			.filter((p) => !published.has(p) && !imageExposed.has(p))
+			.map((p) => {
+				const [port, proto] = p.split('/');
+				return proto && proto !== 'tcp' ? `${port}/${proto}` : port;
+			});
+		if (expose.length > 0) service.expose = expose;
+	}
+	if (host.GroupAdd && host.GroupAdd.length > 0) service.group_add = host.GroupAdd;
+	if (host.Init === true) service.init = true;
+
+	// Runtime/security options (niche but real user intent); each skips its daemon default.
+	if (host.SecurityOpt && host.SecurityOpt.length > 0) service.security_opt = host.SecurityOpt;
+	if (host.PidMode && host.PidMode !== '') service.pid = host.PidMode;
+	if (host.UsernsMode && host.UsernsMode !== '') service.userns_mode = host.UsernsMode;
+	if (host.CgroupParent && host.CgroupParent !== '') service.cgroup_parent = host.CgroupParent;
+	// Runtime: runc is the default; nvidia/runsc/kata are deliberate.
+	if (host.Runtime && host.Runtime !== '' && host.Runtime !== 'runc') service.runtime = host.Runtime;
+	// shm_size: Docker's default is a fixed 64 MiB (67108864); emit only a differing value.
+	if (host.ShmSize && host.ShmSize > 0 && host.ShmSize !== 67108864) service.shm_size = host.ShmSize;
+	if (host.VolumesFrom && host.VolumesFrom.length > 0) service.volumes_from = host.VolumesFrom;
+	if (host.OomKillDisable === true) service.oom_kill_disable = true;
+	if (host.OomScoreAdj && host.OomScoreAdj !== 0) service.oom_score_adj = host.OomScoreAdj;
+	if (config.Domainname && config.Domainname !== '') service.domainname = config.Domainname;
 
 	// Healthcheck: a real Test (not the image-inherited empty / NONE) maps to compose form.
 	const hc = config.Healthcheck;
@@ -303,9 +424,16 @@ export function inspectToCompose(inspect: DockerInspect, options: InspectToCompo
 	const { name, service, namedVolumes } = inspectToComposeService(inspect, options);
 	const doc: Record<string, unknown> = { services: { [name]: service } };
 
-	const networks = service.networks as string[] | undefined;
-	if (networks && networks.length > 0) {
-		doc.networks = Object.fromEntries(networks.map((n) => [n, { external: true }]));
+	// service.networks is either a string[] (bare) or a map {name: {ipv4_address,...}}; the
+	// top-level declaration just needs the names, each marked external (they already exist).
+	const svcNetworks = service.networks as string[] | Record<string, unknown> | undefined;
+	const networkNames = Array.isArray(svcNetworks)
+		? svcNetworks
+		: svcNetworks
+			? Object.keys(svcNetworks)
+			: [];
+	if (networkNames.length > 0) {
+		doc.networks = Object.fromEntries(networkNames.map((n) => [n, { external: true }]));
 	}
 
 	if (namedVolumes.length > 0) {

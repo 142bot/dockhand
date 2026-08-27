@@ -13,7 +13,7 @@ function find(src: string, ruleId: string, ctx: ValidateContext = {}) {
 
 describe('parse + line tracking', () => {
 	test('a clean compose yields no findings', () => {
-		const src = `services:\n  web:\n    image: nginx:1.27\n    restart: unless-stopped\n    ports:\n      - "127.0.0.1:8080:80"\n`;
+		const src = `services:\n  web:\n    image: nginx:1.27\n    restart: unless-stopped\n    healthcheck:\n      test: ["CMD", "true"]\n    ports:\n      - "127.0.0.1:8080:80"\n`;
 		expect(runValidate(src).findings).toEqual([]);
 	});
 
@@ -357,6 +357,34 @@ describe('secret + security + reliability rules', () => {
 	test('MISSING_RESTART_POLICY respects deploy.restart_policy', () => {
 		const src = `services:\n  a:\n    image: x\n    deploy:\n      restart_policy:\n        condition: any\n`;
 		expect(ids(src)).not.toContain('MISSING_RESTART_POLICY');
+	});
+
+	test('MISSING_HEALTHCHECK fires when absent, not when present or explicitly disabled', () => {
+		expect(ids(`services:\n  a:\n    image: x\n`)).toContain('MISSING_HEALTHCHECK');
+		expect(ids(`services:\n  a:\n    image: x\n    healthcheck:\n      test: ["CMD", "true"]\n`)).not.toContain('MISSING_HEALTHCHECK');
+		expect(ids(`services:\n  a:\n    image: x\n    healthcheck:\n      disable: true\n`)).not.toContain('MISSING_HEALTHCHECK');
+	});
+	test('MISSING_HEALTHCHECK is info severity', () => {
+		const f = find(`services:\n  a:\n    image: x\n`, 'MISSING_HEALTHCHECK');
+		expect(f?.severity).toBe('info');
+	});
+
+	test('UNUSED_VOLUME fires for a defined-but-unmounted named volume, not for a used one', () => {
+		expect(ids(`services:\n  a:\n    image: x\nvolumes:\n  data: {}\n`)).toContain('UNUSED_VOLUME');
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - data:/d\nvolumes:\n  data: {}\n`)).not.toContain('UNUSED_VOLUME');
+	});
+	test('UNUSED_VOLUME ignores an external volume (may be mounted elsewhere)', () => {
+		expect(ids(`services:\n  a:\n    image: x\nvolumes:\n  data:\n    external: true\n`)).not.toContain('UNUSED_VOLUME');
+	});
+	test('UNUSED_VOLUME does not fire when no top-level volumes are defined', () => {
+		expect(ids(`services:\n  a:\n    image: x\n    volumes:\n      - ./d:/d\n`)).not.toContain('UNUSED_VOLUME');
+	});
+	test('UNUSED_VOLUME recognizes a long-form { type: volume, source } mount as usage', () => {
+		expect(
+			ids(
+				`services:\n  a:\n    image: x\n    volumes:\n      - type: volume\n        source: data\n        target: /d\nvolumes:\n  data: {}\n`
+			)
+		).not.toContain('UNUSED_VOLUME');
 	});
 });
 

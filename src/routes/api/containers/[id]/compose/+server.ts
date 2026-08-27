@@ -62,6 +62,7 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		let imageEntrypoint: string[] | null = null;
 		let imageCmd: string[] | null = null;
 		let imageLabels: Record<string, string> | null = null;
+		let imageExposedPorts: Record<string, unknown> | null = null;
 		try {
 			const imageRef = containerData.Config?.Image;
 			if (imageRef) {
@@ -70,6 +71,7 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 				imageEntrypoint = imageData?.Config?.Entrypoint ?? null;
 				imageCmd = imageData?.Config?.Cmd ?? null;
 				imageLabels = imageData?.Config?.Labels ?? null;
+				imageExposedPorts = imageData?.Config?.ExposedPorts ?? null;
 			}
 		} catch {
 			// image not present / not pullable - fall back to keeping all values
@@ -80,14 +82,16 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 			imageEnv,
 			imageEntrypoint,
 			imageCmd,
-			imageLabels
+			imageLabels,
+			imageExposedPorts
 		});
 		// Same document but keeping every env var (the "only user-set env" toggle off).
 		const composeFullEnv = inspectToCompose(containerData, {
 			serviceName,
 			imageEntrypoint,
 			imageCmd,
-			imageLabels
+			imageLabels,
+			imageExposedPorts
 		});
 
 		return json({ compose, composeFullEnv, serviceName, stackProject });

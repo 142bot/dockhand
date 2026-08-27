@@ -3,9 +3,8 @@ import type { RequestHandler } from './$types';
 import { inspectContainer } from '$lib/server/docker';
 import { authorize } from '$lib/server/authorize';
 import { validateDockerIdParam } from '$lib/server/docker-validation';
-import { resolveReleaseSource } from '$lib/server/semver/release-source';
 import { resolveChangelogUrl } from '$lib/utils/changelog-url';
-import { fetchReleaseNotes } from '$lib/server/semver/release-notes';
+import { resolveAndFetchReleaseNotes } from '$lib/server/semver/release-notes';
 
 /**
  * GET /api/containers/{id}/version-notes - Release notes for a newer version tag
@@ -43,18 +42,20 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		const imageName: string | undefined = inspectData.Config?.Image;
 		const labels: Record<string, string> = inspectData.Config?.Labels ?? {};
 
-		const src = resolveReleaseSource(imageName, labels);
-		// Prefer the label-based changelog URL; fall back to the forge's releases page.
-		// `versions` is ordered oldest->newest (the semver path), so the LAST entry is
-		// the target tag - feed it to the label so a `{{version}}` template resolves to
-		// the version being offered.
+		// Resolve the source and fetch notes together: a confident forge (image.source
+		// label / ghcr name) is used directly; otherwise a guessed repo (image name /
+		// another label) is accepted only once a release matches a wanted version.
+		const result = await resolveAndFetchReleaseNotes(imageName, labels, versions);
+
+		// Prefer the label-based changelog URL; fall back to the accepted forge's
+		// releases page. `versions` is ordered oldest->newest (the semver path), so the
+		// LAST entry is the target tag - feed it to the label so a `{{version}}` template
+		// resolves to the version being offered.
 		const targetVersion = versions.length ? versions[versions.length - 1] : null;
-		const changelogUrl = resolveChangelogUrl(imageName, labels, targetVersion) ?? src?.releasesUrl ?? null;
+		const changelogUrl =
+			resolveChangelogUrl(imageName, labels, targetVersion) ?? result.source?.releasesUrl ?? null;
 
-		// No recognizable forge -> no per-version notes, just the changelog link (if any).
-		const result = src ? await fetchReleaseNotes(src, versions) : { notes: [], rateLimited: false };
-
-		return json({ changelogUrl, source: src?.slug ?? null, notes: result.notes, rateLimited: result.rateLimited });
+		return json({ changelogUrl, source: result.source?.slug ?? null, notes: result.notes, rateLimited: result.rateLimited });
 	} catch (error) {
 		console.error('Failed to resolve version notes:', error);
 		return json({ error: 'Failed to resolve release notes' }, { status: 500 });

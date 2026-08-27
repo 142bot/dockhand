@@ -12,8 +12,11 @@
  * `org.opencontainers.image.source` label wins, then a `ghcr.io/<owner>/<repo>`
  * image name (always GitHub).
  *
- * Pure, no I/O, unit-tested. Images with no recognizable source resolve to null
- * (we never guess a repo - a wrong repo is worse than no notes).
+ * Pure, no I/O, unit-tested. `resolveReleaseSource` returns only a CONFIDENT source
+ * (label or ghcr name) or null - it never guesses. `resolveReleaseSourceCandidates`
+ * additionally offers GUESSED fallbacks (image name / other labels) that the caller
+ * must validate against the wanted version before trusting (a wrong repo is worse
+ * than no notes).
  */
 
 const GHCR_PREFIX = 'ghcr.io/';
@@ -28,6 +31,10 @@ export interface ReleaseSource {
 	apiBase: string;
 	/** Human-facing releases page (for the "View releases" fallback link). */
 	releasesUrl: string;
+	/** True for a GUESSED source (image name / a non-source label). A guessed repo is
+	 *  only trusted once the API confirms a release matching the wanted version -
+	 *  the caller drops it if no note matches (a wrong repo is worse than no notes). */
+	needsValidation?: boolean;
 }
 
 /** Pull `owner/repo` out of a forge URL, tolerating trailing slash / `.git`. */
@@ -97,6 +104,70 @@ export function resolveReleaseSource(
 	}
 
 	return null;
+}
+
+/** Pull an `owner/repo` slug from a github.com or ghcr.io URL anywhere in a string. */
+function githubSlugFromText(text: string): string | null {
+	const m = text.match(/(?:github\.com|ghcr\.io)\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
+	if (!m || !m[1] || !m[2]) return null;
+	return `${m[1].toLowerCase()}/${m[2].replace(/\.git$/, '').toLowerCase()}`;
+}
+
+/** `owner/repo` from an image name, stripping registry host, tag and digest. */
+function slugFromImageName(imageName: string): string | null {
+	const repo = stripImageTag(imageName);
+	const parts = repo.split('/');
+	// Drop a leading registry host segment (has a dot or a port), e.g. ghcr.io, docker.io.
+	if (parts.length > 2 && /[.:]/.test(parts[0])) parts.shift();
+	if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+	return `${parts[0]}/${parts[1]}`;
+}
+
+/**
+ * Resolve release-note sources for an image, best-first. The first entry (if any)
+ * is the CONFIDENT source (`org.opencontainers.image.source` label, or a ghcr image
+ * name). Any following entries are GUESSED fallbacks (`needsValidation: true`), used
+ * only when no confident source exists: an `owner/repo` slug taken from the image
+ * name treated as a GitHub repo, and any github.com / ghcr.io URL found in OTHER
+ * labels/annotations. Guessed candidates are deduped, capped (a crafted label set
+ * must not fan out into many outbound API calls), and must be validated by the
+ * caller (a release tag matching the wanted version) before their notes are shown.
+ */
+export function resolveReleaseSourceCandidates(
+	imageName: string | null | undefined,
+	labels?: Record<string, string> | null
+): ReleaseSource[] {
+	const confident = resolveReleaseSource(imageName, labels);
+	if (confident) return [confident];
+
+	// Cap guessed candidates: each becomes one outbound GitHub API call at fetch time,
+	// and a container can carry arbitrarily many labels, so a crafted label set must
+	// not amplify into a fan-out. The real source is almost always the first one or two.
+	const MAX_GUESSES = 5;
+	const seen = new Set<string>();
+	const candidates: ReleaseSource[] = [];
+	const add = (slug: string | null) => {
+		if (!slug || candidates.length >= MAX_GUESSES) return;
+		const key = slug.toLowerCase();
+		if (seen.has(key)) return;
+		seen.add(key);
+		candidates.push({ ...githubSource(key), needsValidation: true });
+	};
+
+	// (a) owner/repo from the image name, as a GitHub repo (covers Docker Hub
+	//     images whose name mirrors their GitHub slug, e.g. grafana/grafana).
+	if (imageName) add(slugFromImageName(imageName));
+
+	// (b) any github.com / ghcr.io URL in a NON-source label or annotation
+	//     (url, documentation, vendor-specific), first match per label.
+	if (labels) {
+		for (const [k, v] of Object.entries(labels)) {
+			if (k === 'org.opencontainers.image.source' || !v) continue;
+			add(githubSlugFromText(v));
+		}
+	}
+
+	return candidates;
 }
 
 function githubSource(slug: string): ReleaseSource {
