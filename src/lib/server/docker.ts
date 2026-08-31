@@ -1190,8 +1190,88 @@ export async function listContainers(all = true, envId?: number | null): Promise
 	});
 }
 
+// --- Podman stats compatibility -----------------------------------------------------
+// Podman's Docker-compatible API zeroes precpu_stats (and omits
+// precpu_stats.system_cpu_usage) on stream=false one-shot stats requests,
+// so delta-based CPU percentages are always 0 (Finsys/dockhand#335).
+// Docker populates precpu_stats natively. Remember the previous cpu_stats
+// sample per container+environment and, only when the runtime provided no
+// usable baseline, splice the remembered sample into precpu_stats so the
+// existing calculateCpuPercent() implementations compute a real delta
+// between successive polls.
+
+interface CpuSampleCacheEntry {
+	totalUsage: number;
+	systemUsage: number;
+	readMs: number;
+	cachedAtMs: number;
+}
+
+const cpuSampleCache = new Map<string, CpuSampleCacheEntry>();
+const CPU_SAMPLE_TTL_MS = 10 * 60 * 1000;
+const CPU_SAMPLE_MIN_INTERVAL_MS = 500;
+
+function parseStatsReadMs(stats: any): number {
+	const t = Date.parse(stats?.read);
+	return Number.isFinite(t) ? t : Date.now();
+}
+
+function rememberCpuSample(key: string, totalUsage: number, systemUsage: number, readMs: number, now: number): void {
+	cpuSampleCache.set(key, { totalUsage, systemUsage, readMs, cachedAtMs: now });
+	if (cpuSampleCache.size > 64) {
+		for (const [k, v] of cpuSampleCache) {
+			if (now - v.cachedAtMs > CPU_SAMPLE_TTL_MS) cpuSampleCache.delete(k);
+		}
+	}
+}
+
+function withSynthesizedPrecpu<T>(stats: T, key: string): T {
+	const cpuUsage = (stats as any)?.cpu_stats?.cpu_usage;
+	const systemUsage = (stats as any)?.cpu_stats?.system_cpu_usage;
+	const preTotal = (stats as any)?.precpu_stats?.cpu_usage?.total_usage;
+	const preSystem = (stats as any)?.precpu_stats?.system_cpu_usage;
+
+	// Runtime already provides a usable baseline (Docker): pass through.
+	if ((preTotal ?? 0) > 0 && (preSystem ?? 0) > 0) return stats;
+
+	// Nothing usable to remember or synthesize.
+	if (!cpuUsage || typeof systemUsage !== 'number') return stats;
+
+	const now = Date.now();
+	const readMs = parseStatsReadMs(stats);
+	const cached = cpuSampleCache.get(key);
+
+	if (cached) {
+		// Advance the baseline only when the sample is far enough from the
+		// cached read time; callers within the same polling round share one
+		// baseline instead of chaining micro-deltas onto each other.
+		if (readMs - cached.readMs >= CPU_SAMPLE_MIN_INTERVAL_MS) {
+			rememberCpuSample(key, cpuUsage.total_usage, systemUsage, readMs, now);
+		}
+		return {
+			...(stats as any),
+			precpu_stats: {
+				cpu_usage: {
+					total_usage: cached.totalUsage,
+						usage_in_kernelmode: 0,
+						usage_in_usermode: 0
+				},
+			system_cpu_usage: cached.systemUsage,
+			throttling_data: { periods: 0, throttled_periods: 0, throttled_time: 0 }
+			}
+		} as T;
+	}
+
+	// First poll for this container (e.g. after DockHand restart): remember
+	// the sample and return unchanged - CPU reads 0.0% for one interval,
+	// mirroring the podman CLI's first stats line.
+	rememberCpuSample(key, cpuUsage.total_usage, systemUsage, readMs, now);
+	return stats;
+}
+
 export async function getContainerStats(id: string, envId?: number | null) {
-	return dockerJsonRequest(`/containers/${id}/stats?stream=false`, {}, envId);
+	const stats = await dockerJsonRequest<any>(`/containers/${id}/stats?stream=false`, {}, envId);
+	return withSynthesizedPrecpu(stats, `${envId ?? 'local'}:${id}`);
 }
 
 export async function startContainer(id: string, envId?: number | null) {
